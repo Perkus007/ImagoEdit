@@ -11,7 +11,7 @@ It works fully offline: no ads, no analytics, no internet permission.
 - Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders
 - Projects live in a plain folder on the device and stay there when the app is uninstalled
 
-![Editor with layers and a photo](docs/screenshots/editor.png)
+![Editor with layers and a photo](docs/screenshots/editor.webp)
 
 ## Contents
 - [Screenshots](#screenshots)
@@ -30,12 +30,12 @@ It works fully offline: no ads, no analytics, no internet permission.
 
 ## Screenshots
 <p align="center">
-  <img src="docs/screenshots/projects.png" width="49%" alt="Project list with the export panel">
-  <img src="docs/screenshots/selection.png" width="49%" alt="Selection transform with a soft edge">
+  <img src="docs/screenshots/projects.webp" width="49%" alt="Project list with the export panel">
+  <img src="docs/screenshots/selection.webp" width="49%" alt="Selection transform with a soft edge">
 </p>
 <p align="center">
-  <img src="docs/screenshots/retouch.png" width="49%" alt="Stamp and healing brush">
-  <img src="docs/screenshots/text.png" width="49%" alt="Text tool with the font list">
+  <img src="docs/screenshots/retouch.webp" width="49%" alt="Stamp and healing brush">
+  <img src="docs/screenshots/text.webp" width="49%" alt="Text tool with the font list">
 </p>
 
 ## Features
