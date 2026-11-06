@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Шрифты для инструмента «Текст», по строке на файл. Перечень нужен потому, что R8 удаляет из сборки ресурсы, на которые ничто не ссылается. -->
+    <array name="app_fonts">
+        <!-- Cyrillic / Latin -->
+        <item>@font/caveat_variable</item>
+        <item>@font/handjet_variable</item>
+        <item>@font/roboto_slab_variable</item>
+        <item>@font/tiny_five_buo_variable</item>
+    </array>
+</resources>
