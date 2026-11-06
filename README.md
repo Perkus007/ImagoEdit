@@ -43,6 +43,8 @@ your contributions are licensed under GPL-3.0-or-later.
 - AndroidX / Jetpack Compose — Apache-2.0
 - Fonts: Caveat, Handjet, Tiny5 — SIL OFL 1.1; Roboto Slab — Apache-2.0
 
+Full license texts: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
 ## License
 Copyright (C) 2026 Perkus
 
