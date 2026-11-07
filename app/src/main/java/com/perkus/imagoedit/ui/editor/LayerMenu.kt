@@ -31,10 +31,10 @@ import com.perkus.imagoedit.ui.common.Popover
 import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.anchored
 
-private val MENU_W = 220.dp // ширина карточки
-private val MENU_GAP = 4.dp // зазор между карточкой и панелью слоёв
+private val MENU_W = 220.dp
+private val MENU_GAP = 4.dp
 
-/** Fields are read only in the canvas draw phase → the slider doesn't recompose. [layer] — Layer.id of the layer shown, 0 — none */
+/** Read only in the canvas draw phase: the slider doesn't recompose. [layer] — Layer.id shown, 0 — none */
 @Stable
 class OpacityPreview {
     var layer by mutableLongStateOf(0L)
@@ -44,8 +44,7 @@ class OpacityPreview {
 
 private fun Modifier.leftOf(anchor: Rect, frame: WindowInsets) = anchored(anchor, frame) { a, w, h -> Offset(a.left - MENU_GAP.roundToPx() - w, a.bottom - h) }
 
-/** The new value is committed ([onOpacity]) on slider release and on NumPad ✓; while sliding — canvas preview only.
-Stays open after [onDelete]: then it shows the next active layer, [opacity] and [layer] (Layer.id) are its */
+/** Committed ([onOpacity]) on slider release and NumPad ✓; while sliding — preview only. Stays open after [onDelete], then shows the next active layer */
 @Composable
 fun LayerMenu(anchor: Rect, opacity: Int, layer: Long, canDelete: Boolean, preview: OpacityPreview, onOpacity: (Int) -> Unit, onDelete: () -> Unit, onMerge: () -> Unit, onDismiss: () -> Unit) {
     val frame = LocalFrame.current

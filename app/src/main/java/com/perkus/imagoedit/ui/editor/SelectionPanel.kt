@@ -43,9 +43,9 @@ class SelectionOptions(settings: AppSettings) {
     val mode = EnumOption(settings, "selection.mode", SelectMode.entries)
     val corner = IntOption(settings, "selection.corner", 0..1000, 0)
     val tolerance = IntOption(settings, "selection.tolerance", 0..255, 32)
-    val contiguous = BoolOption(settings, "selection.contiguous", true) // Off — every matching pixel of the layer, not only the connected region
-    val fixedRatio = BoolOption(settings, "selection.fixedRatio", false) // Square, Circle: 1:1
-    val brush = BrushOptions(settings, "selection.brush", listOf(BrushParam.Size)) // hard: hardness, paint and opacity mean nothing for a selection
+    val contiguous = BoolOption(settings, "selection.contiguous", true) // Off — every matching px, not only the connected region
+    val fixedRatio = BoolOption(settings, "selection.fixedRatio", false)
+    val brush = BrushOptions(settings, "selection.brush", listOf(BrushParam.Size)) // only Size: a selection is hard
 }
 
 @Composable
@@ -73,7 +73,7 @@ fun SelectionPanel(o: SelectionOptions, select: SelectTool, open: ToolPopup?, on
             SwitchCell(o.contiguous, stringResource(R.string.select_contiguous))
         }
         SelectStyle.Brush -> BrushBtn(o.brush, open, onOpen)
-        // The unfinished polygon's own history: its vertices one by one
+        // The unfinished polygon's own history
         SelectStyle.Polygon -> Row {
             IconBtn(AppIcons.StepBack, select.canUndoVertex) { Feedback.tap(); select.undoVertex() }
             IconBtn(AppIcons.StepForward, select.canRedoVertex) { Feedback.tap(); select.redoVertex() }
@@ -82,7 +82,6 @@ fun SelectionPanel(o: SelectionOptions, select: SelectTool, open: ToolPopup?, on
     }
 }
 
-/** The whole cell toggles */
 @Composable
 private fun SwitchCell(o: BoolOption, label: String) = Column(
     Modifier.fillMaxWidth().padding(top = 8.dp).toggleable(o.value, interactionSource = null, indication = null, role = Role.Switch) { o.value = it },

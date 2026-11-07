@@ -20,13 +20,12 @@ import kotlin.math.log2
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private const val MATCH: Byte = 1 // сетка волшебной палочки: пиксель похож цветом на исходный
-private const val FILLED: Byte = 2 // сетка волшебной палочки: похож и связан с исходным (смежный режим)
+private const val MATCH: Byte = 1 // палочка: похож цветом на исходный
+private const val FILLED: Byte = 2 // палочка: похож и связан с исходным
 
-private val contentBoxes = Collections.synchronizedMap(WeakHashMap<Bitmap, ContentBox>()) // Keyed by Bitmap: layer pixels never change in place (an edit writes a new bitmap)
+private val contentBoxes = Collections.synchronizedMap(WeakHashMap<Bitmap, ContentBox>()) // layer pixels never change in place
 
-/** A line of [len] file px of a layer from [x], [y] along X or Y into [px] (non-premultiplied): its pixels [bmp] (null — none) erased by [mask], [patch] over them where it has tiles.
-[tmp] — TILE ints */
+/** [len] file px of a layer from [x], [y] along X or Y into [px] (non-premultiplied), mask and patch applied. [tmp] — TILE ints */
 fun readLine(bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, px: IntArray, x: Int, y: Int, alongX: Boolean, len: Int, tmp: IntArray) {
     when {
         bmp == null -> px.fill(0, 0, len)
@@ -37,8 +36,7 @@ fun readLine(bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, px: IntArray, x: Int
     patch?.over(px, x, y, alongX, len)
 }
 
-/** Off the main thread. The visible part of a [w]×[h] layer: its pixels [bmp] (null — none) without those [mask] erases fully, [patch] over them.
-Pixels alone without an alpha channel → whole; no visible pixels → whole marked [ContentBox.empty] */
+/** Off the main thread. The visible part of a layer, mask and patch applied; no alpha channel → whole; nothing visible → [ContentBox.empty] */
 fun contentBox(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask? = null, patch: Tiles? = null): ContentBox {
     val plain = mask == null && patch == null
     if (bmp != null && plain) {
@@ -77,9 +75,9 @@ fun contentBox(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask? = null, patch: Til
     return ContentBox(left / w.toFloat(), top / h.toFloat(), (right + 1f) / w, (bottom + 1f) / h).also { if (bmp != null && plain) contentBoxes[bmp] = it }
 }
 
-/** Union of [this] regions (they're consumed), merged pairwise like a binary counter: adding them one by one to one region would be quadratic */
+/** Union of the regions (consumed), merged pairwise: one by one would be quadratic */
 fun Sequence<Region>.unionAll(): Region {
-    val levels = ArrayList<Region?>() // [k] — parts merged by 2^k, or none
+    val levels = ArrayList<Region?>() // [k] — 2^k parts merged
     for (part in this) {
         var k = 0
         while (k < levels.size) {
@@ -92,12 +90,11 @@ fun Sequence<Region>.unionAll(): Region {
     return Region().apply { for (r in levels) if (r != null) op(r, Region.Op.UNION) }
 }
 
-/** A [w]×[h] layer read by lines lying along canvas rows under [m] (90° turns, flips and whole px shifts only): stored rows if [alongX], otherwise stored columns,
-each [len] px from [start]. Only the [lines] that may show: without pixels [bmp] nothing lies outside the [patch]'s tiles */
+/** A layer read by lines along canvas rows under [m] (90° turns, flips, whole-px shifts only): stored rows if [alongX], else columns. Without [bmp] only the patch's lines */
 private class LayerLines(private val bmp: Bitmap?, w: Int, h: Int, m: Matrix, private val mask: LayerMask?, private val patch: Tiles?) {
     private val v = FloatArray(9).also { m.getValues(it) }
     val alongX = v[Matrix.MSCALE_X] != 0f
-    val step = (if (alongX) v[Matrix.MSCALE_X] else v[Matrix.MSKEW_X]).toInt() // ±1: the way a line's px go along its canvas row
+    val step = (if (alongX) v[Matrix.MSCALE_X] else v[Matrix.MSKEW_X]).toInt() // ±1 along the canvas row
     private val b = if (bmp != null) Rect(0, 0, w, h) else patch?.bounds() ?: Rect()
     val start = if (alongX) b.left else b.top
     val len = if (alongX) b.width() else b.height()
@@ -105,12 +102,10 @@ private class LayerLines(private val bmp: Bitmap?, w: Int, h: Int, m: Matrix, pr
     val px = IntArray(len)
     private val tmp = IntArray(TILE)
 
-    /** Line [i] into [px] */
     fun read(i: Int) = readLine(bmp, mask, patch, px, if (alongX) start else i, if (alongX) i else start, alongX, len, tmp)
 }
 
-/** Runs of the px that pass [on] in [lines] of [len] px, each line read by [read] first — line i along X: y = i from x = [start], else x = i from y = [start] — placed by [m] (null — as they are).
-A region per line clipped to [clip] — setPath's working buffer is height × all edges, so it stays one line high — merged by unionAll */
+/** Runs of px passing [on] in [lines] (each read by [read] first) as a region placed by [m]. A region per line — setPath's buffer is height × all edges — merged by unionAll */
 private inline fun runsRegion(lines: IntRange, start: Int, len: Int, alongX: Boolean, m: Matrix?, clip: Region, crossinline read: (Int) -> Unit, crossinline on: (Int) -> Boolean): Region {
     val span = RectF()
     val path = Path()
@@ -131,8 +126,7 @@ private inline fun runsRegion(lines: IntRange, start: Int, len: Int, alongX: Boo
     }.unionAll()
 }
 
-/** A [w]×[h] layer's visible pixels — [bmp] (null — none) with alpha > 0 that [mask] doesn't erase fully, [patch] over them — as a region placed by [m]
-(90° turns, flips and whole px shifts only): each separate area gets its own contour. Off the main thread */
+/** Visible px (alpha > 0, mask and patch applied) as a region placed by [m]; each separate area its own contour. Off the main thread */
 fun visibleRegion(bmp: Bitmap?, w: Int, h: Int, m: Matrix, mask: LayerMask? = null, patch: Tiles? = null): Region {
     val l = LayerLines(bmp, w, h, m, mask, patch)
     val span = RectF(0f, 0f, w.toFloat(), h.toFloat()).also { m.mapRect(it) }
@@ -140,24 +134,23 @@ fun visibleRegion(bmp: Bitmap?, w: Int, h: Int, m: Matrix, mask: LayerMask? = nu
     return runsRegion(l.lines, l.start, l.len, l.alongX, m, clip, l::read) { (l.px[it] ushr 24) != 0 }
 }
 
-/** The px of ALPHA_8 [this] with alpha at least [min] as a region, its top-left at canvas px ([x], [y]). Off the main thread */
+/** Px with alpha ≥ [min] as a region at canvas px ([x], [y]). Off the main thread */
 fun Bitmap.alphaRegion(x: Int, y: Int, min: Int): Region {
     val row = IntArray(width)
     return runsRegion(0 until height, 0, width, true, Matrix().apply { setTranslate(x.toFloat(), y.toFloat()) }, Region(x, y, x + width, y + height),
         { getPixels(row, 0, width, 0, it, width, 1) }) { (row[it] ushr 24) >= min }
 }
 
-/** The px of ALPHA_8 [this] within [r] px of one it fills (r > 0), or all of whose px within -r it fills (r < 0), past it nothing filled: its fill's outline moved out or in by r,
-corners rounded. Exact on px centers: each px's distance along its column to the nearest spreading px, then per row the spans those columns reach. As a region, its top-left at canvas
-px ([x], [y]). Off the main thread: a Short per px */
+/** The fill moved out by [r] px (in for r < 0), corners rounded, exact on px centers: column distances, then per row the spans they reach. A region at ([x], [y]).
+Off the main thread: a Short per px */
 fun Bitmap.grownRegion(x: Int, y: Int, r: Float): Region {
     val w = width
     val h = height
-    val out = r > 0f // the filled px spread; shrinking — the unfilled ones, those past the bitmap too (its edge shrinks at any scale of a copy), and the rest stays
+    val out = r > 0f // shrinking spreads the unfilled px, past the bitmap too
     val rr = abs(r)
-    val far = ceil(rr).toInt() + 1 // past any reach
-    val edge = if (out) far else 1 // to the row past the bitmap
-    val d = ShortArray(w * h) // to the nearest spreading px of its column, capped at far
+    val far = ceil(rr).toInt() + 1
+    val edge = if (out) far else 1
+    val d = ShortArray(w * h) // column distance to the nearest spreading px, capped
     val row = IntArray(w)
     for (j in 0 until h) {
         getPixels(row, 0, w, 0, j, w, 1)
@@ -166,13 +159,13 @@ fun Bitmap.grownRegion(x: Int, y: Int, r: Float): Region {
     }
     for (i in w * (h - 1) until w * h) if (edge < d[i]) d[i] = edge.toShort()
     for (o in w * (h - 2) downTo 0 step w) for (i in o until o + w) if (d[i + w] + 1 < d[i]) d[i] = (d[i + w] + 1).toShort()
-    val half = IntArray(far) { k -> if (k <= rr) floor(sqrt(rr.toDouble() * rr - k * k)).toInt() else -1 } // along the row a spreading px k rows off reaches either way
+    val half = IntArray(far) { k -> if (k <= rr) floor(sqrt(rr.toDouble() * rr - k * k)).toInt() else -1 } // half-width a spreading px k rows off reaches
     val near = BooleanArray(w)
     return runsRegion(0 until h, 0, w, true, Matrix().apply { setTranslate(x.toFloat(), y.toFloat()) }, Region(x, y, x + w, y + h), { j ->
         val o = j * w
-        var reach = if (out) Int.MIN_VALUE else half[0] - 1 // shrinking: from the column past the left edge
+        var reach = if (out) Int.MIN_VALUE else half[0] - 1 // shrinking: from past the left edge
         for (i in 0 until w) { val k = d[o + i].toInt(); if (k < far && half[k] >= 0) reach = maxOf(reach, i + half[k]); near[i] = reach >= i }
-        reach = if (out) Int.MAX_VALUE else w - half[0] // and past the right one
+        reach = if (out) Int.MAX_VALUE else w - half[0]
         for (i in w - 1 downTo 0) { val k = d[o + i].toInt(); if (k < far && half[k] >= 0) reach = minOf(reach, i - half[k]); if (reach <= i) near[i] = true }
     }) { near[it] == out }
 }
@@ -180,9 +173,8 @@ fun Bitmap.grownRegion(x: Int, y: Int, r: Float): Region {
 /** Channel [shift] of non-premultiplied [c], premultiplied */
 private fun premul(c: Int, shift: Int) = ((c shr shift and 0xFF) * (c ushr 24) + 127) / 255
 
-/** Off the main thread. The magic wand on a [w]×[h] layer — its pixels [bmp] (null — none), [mask] and [patch] applied, placed by [m] (90° turns, flips and whole px shifts only) —
-over the [cw]×[ch] canvas, transparent past the layer: the canvas px whose premultiplied channels each differ from those of the px ([x], [y]) by at most [tolerance];
-[contiguous] — only those joined to it side by side. A byte per canvas px */
+/** Off the main thread. Magic wand over the [cw]×[ch] canvas, transparent past the layer: px whose premultiplied channels differ from px ([x], [y]) by ≤ [tolerance];
+[contiguous] — only those joined to it. A byte per canvas px */
 fun wandRegion(bmp: Bitmap?, w: Int, h: Int, m: Matrix, mask: LayerMask?, patch: Tiles?, cw: Int, ch: Int, x: Int, y: Int, tolerance: Int, contiguous: Boolean): Region {
     val l = LayerLines(bmp, w, h, m, mask, patch)
     val pt = floatArrayOf(x + 0.5f, y + 0.5f).also { Matrix().apply { m.invert(this) }.mapPoints(it) }
@@ -215,9 +207,9 @@ fun wandRegion(bmp: Bitmap?, w: Int, h: Int, m: Matrix, mask: LayerMask?, patch:
     return runsRegion(0 until ch, 0, cw, true, null, Region(0, 0, cw, ch), { row = it * cw }) { grid[row + it] == pick }
 }
 
-/** Scanline flood fill: the MATCH px joined side by side to [start] become FILLED; [cols] px a row */
+/** Scanline flood: MATCH px joined to [start] become FILLED */
 private fun ByteArray.flood(cols: Int, start: Int) {
-    var stack = IntArray(1024) // a px of each run still to fill
+    var stack = IntArray(1024)
     var n = 0
     stack[n++] = start
     while (n > 0) {
@@ -243,10 +235,10 @@ private fun ByteArray.flood(cols: Int, start: Int) {
     }
 }
 
-/** Bilinear: at exactly half it's a moiré-free 2×2 average. Only along [x] / [y] if one is off */
+/** Bilinear at exactly half = a moiré-free 2×2 average */
 fun Bitmap.halved(x: Boolean = true, y: Boolean = true): Bitmap = scale(if (x) (width / 2).coerceAtLeast(1) else width, if (y) (height / 2).coerceAtLeast(1) else height)
 
-/** Halved along each axis while its [x] / [y] holds: the other one's detail is kept. Intermediate copies are recycled, [this] is not; nothing to halve → returns [this] */
+/** Halved per axis while [x] / [y] holds; intermediates recycled, [this] not */
 inline fun Bitmap.halveWhile(x: (Bitmap) -> Boolean, y: (Bitmap) -> Boolean): Bitmap {
     var s = this
     while (true) {
@@ -263,7 +255,7 @@ inline fun Bitmap.halveWhile(x: (Bitmap) -> Boolean, y: (Bitmap) -> Boolean): Bi
 fun Bitmap.blankLike(w: Int, h: Int): Bitmap =
     if (config == Bitmap.Config.ALPHA_8) createBitmap(w, h, Bitmap.Config.ALPHA_8) else createBitmap(w, h, Bitmap.Config.ARGB_8888, true, colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB))
 
-/** Level of the smallest 2ⁿ× smaller copy shown downscaled by at most 2× at [k] px per original px */
+/** Level of the smallest copy downscaled ≤ 2× at [k] px per original px */
 fun levelFor(k: Float) = if (k >= 1f) 0 else floor(log2(1f / k)).toInt()
 
 /** Lossless: the file decodes exactly to these pixels */

@@ -25,17 +25,17 @@ enum class BlurStyle(override val icon: ImageVector, override val title: Int) : 
 class StampOptions(settings: AppSettings) {
     val style = EnumOption(settings, "stamp.style", StampStyle.entries)
     val brush = BrushOptions(settings, "stamp.brush", BrushParam.entries - BrushParam.Intensity)
-    var source by mutableStateOf(false) // On — a canvas tap or drag places the point pixels are copied from (BrushTool), then it goes off
+    var source by mutableStateOf(false) // On — a tap or drag places the source point, then it goes off
 }
 
 @Stable
 class BlurOptions(settings: AppSettings) {
     val style = EnumOption(settings, "blur.style", BlurStyle.entries)
-    val brush = BrushOptions(settings, "blur.brush", listOf(BrushParam.Size, BrushParam.Hardness, BrushParam.Opacity, BrushParam.Intensity)) // the panel shows a subset per style
-}
+    private val area = BrushOptions(settings, "blur.area", listOf(BrushParam.Size, BrushParam.Hardness, BrushParam.Intensity))
+    private val finger = BrushOptions(settings, "blur.finger", listOf(BrushParam.Size, BrushParam.Hardness, BrushParam.Intensity))
 
-private val AREA_PARAMS = listOf(BrushParam.Size, BrushParam.Hardness, BrushParam.Opacity)
-private val FINGER_PARAMS = listOf(BrushParam.Size, BrushParam.Hardness, BrushParam.Intensity)
+    val brush get() = if (style.value == BlurStyle.Area) area else finger
+}
 
 @Composable
 fun StampPanel(o: StampOptions, open: ToolPopup?, onOpen: (OpenPopup) -> Unit) {
@@ -47,5 +47,5 @@ fun StampPanel(o: StampOptions, open: ToolPopup?, onOpen: (OpenPopup) -> Unit) {
 @Composable
 fun BlurPanel(o: BlurOptions, open: ToolPopup?, onOpen: (OpenPopup) -> Unit) {
     StyleBtn(o.style, open, onOpen)
-    BrushBtn(o.brush, open, onOpen, if (o.style.value == BlurStyle.Area) AREA_PARAMS else FINGER_PARAMS)
+    BrushBtn(o.brush, open, onOpen)
 }

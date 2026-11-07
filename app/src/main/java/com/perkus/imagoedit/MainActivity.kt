@@ -34,7 +34,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         Feedback.init(this)
-        if (savedInstanceState == null) openSharedImage(intent) // on recreation (theme/language change) the same Intent isn't handled twice
+        if (savedInstanceState == null) openSharedImage(intent) // recreation doesn't handle the Intent twice
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Color.TRANSPARENT), navigationBarStyle = SystemBarStyle.dark(Color.TRANSPARENT))
         window.hideSystemBars()
         setContent {
@@ -42,9 +42,9 @@ class MainActivity : ComponentActivity() {
                 ScreenFrame {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                         val editing = vm.editing
-                        // Keyed: the editor's remembered state (canvas size, tools) belongs to one project, even if another replaces it within a frame
+                        // Keyed: the editor's remembered state belongs to one project
                         if (editing != null) key(editing.id) { EditorScreen(vm, editing) } else MainMenuScreen(vm)
-                        if (vm.recovered != null && !vm.busy) RecoveryDialog(vm::resolveRecovery) // not while busy (import/open started before the check): open() wouldn't start
+                        if (vm.recovered != null && !vm.busy) RecoveryDialog(vm::resolveRecovery) // not while busy: open() wouldn't start
                         vm.error?.let { if (it is TooLarge) TooLargeDialog(it, vm::resolveTooLarge) else ErrorDialog(it, vm::dismissError) }
                     }
                 }
@@ -57,17 +57,17 @@ class MainActivity : ComponentActivity() {
         openSharedImage(intent)
     }
 
-    /** applicationContext: the resolver outlives the Activity inside the ViewModel */
+    /** applicationContext: the resolver outlives the Activity */
     private fun openSharedImage(intent: Intent) {
         val uri = intent.data ?: IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java) ?: return
         vm.openExternal(applicationContext.contentResolver, uri)
     }
 
     override fun onStart() { super.onStart(); Feedback.visible = true }
-    // The recovery write still waiting goes now: the process may be killed in the background
+    // The pending recovery write goes now: the process may be killed in the background
     override fun onStop() { super.onStop(); Feedback.visible = false; vm.flushAutosave() }
 
-    /** Covers the return from "All files access" settings */
+    /** Also the return from "All files access" settings */
     override fun onResume() {
         super.onResume()
         vm.refreshAccess()

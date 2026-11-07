@@ -72,40 +72,38 @@ import com.perkus.imagoedit.ui.theme.SmallShape
 import com.perkus.imagoedit.ui.theme.TranslucentGray
 import kotlin.math.roundToInt
 
-private const val COLS = 12 // столбцов в сетке палитры
-private const val ROWS = 3 // строк в сетке палитры
-private const val SAVED = COLS - 2 // ячеек сохранённых цветов: строку начинает кнопка сохранения шириной в 2 ячейки
-private const val LOUPE_ZOOM = 4f // увеличение лупы относительно экрана
-private val CELL = 32.dp // ячейка палитры, высота строки ползунка и сторона кнопки режима
-private val GAP = 8.dp // между ячейками, кнопками и до краёв панели
-private val WIDE = CELL * 2 + GAP // кнопка сохранения и блок предпросмотра: 2 ячейки
-private val PANEL_W = GAP + CELL * COLS + GAP * (COLS - 1) + GAP + CELL + GAP // одинаковы в обоих режимах
+private const val COLS = 12
+private const val ROWS = 3
+private const val SAVED = COLS - 2 // строку начинает кнопка сохранения в 2 ячейки
+private const val LOUPE_ZOOM = 4f
+private val CELL = 32.dp // и высота строки ползунка
+private val GAP = 8.dp
+private val WIDE = CELL * 2 + GAP // 2 ячейки
+private val PANEL_W = GAP + CELL * COLS + GAP * (COLS - 1) + GAP + CELL + GAP // одинакова в обоих режимах
 private val PANEL_H = GAP + CELL * ROWS + GAP * (ROWS - 1) + GAP
-private val FIELD_W = 48.dp // поле значения: вмещает «360°»
+private val FIELD_W = 48.dp // вмещает «360°»
 private val LOUPE_R = 64.dp
-private val LOUPE_LIFT = 20.dp // от пальца до нижнего края лупы
-private val CROSS = 16.dp // от центра прицела до конца луча
-private val CROSS_GAP = 4.dp // от центра прицела до начала луча: выбираемый пиксель не закрыт
-private val LINE = Modifier.height(CELL).wrapContentHeight() // элемент строки ползунка по центру её высоты
+private val LOUPE_LIFT = 20.dp
+private val CROSS = 16.dp
+private val CROSS_GAP = 4.dp // выбираемый пиксель не закрыт
+private val LINE = Modifier.height(CELL).wrapContentHeight()
 
-/** Hue spectrum: the color at any point equals the hue at that slider value */
+/** Hue spectrum: the color at any point = the hue at that slider value */
 private val HUE_TRACK = Brush.horizontalGradient(List(7) { Color.hsv(60f * it % 360f, 1f, 1f) })
 
-/** Palette rows 2–3. Row 2: rainbow; shades of gray; the rest are placeholders */
+/** Palette rows 2–3: rainbow, grays, placeholders */
 private val PRESETS = listOf(
     0xFFFF0000, 0xFFFF7F00, 0xFFFFFF00, 0xFF00FF00, 0xFF00BFFF, 0xFF0000FF, 0xFF8B00FF, 0xFFFFFFFF, 0xFFC0C0C0, 0xFF6B6B6B, 0xFF2A2A2A, 0xFF000000,
     0xFF005F73, 0xFFFF6F61, 0xFF1B365D, 0xFF009B77, 0xFF800020, 0xFFA78BFA, 0xFFE2725B, 0xFF3EB489, 0xFFE5A93B, 0xFFB76E79, 0xFF00E1FF, 0xFFFFE4C4
 ).map { Color(it) }.chunked(COLS)
 
-/** The picture under the pipette. Points are in the coordinates of the Box the panel is emitted into */
+/** The picture under the pipette; points in the host Box's coordinates */
 interface PipetteSource {
-    /** The picture scaled [zoom]× about [focus] */
     fun DrawScope.drawAround(focus: Offset, zoom: Float)
-    /** null — nothing to pick there */
     fun colorAt(p: Offset): Color?
 }
 
-/** HSV, not RGB: hue and saturation survive gray and black, so the sliders don't jump. Saturation and brightness in %. [saved] — newest first */
+/** HSV: hue and saturation survive gray and black, the sliders don't jump. [saved] — newest first */
 @Stable
 class ColorOptions(private val settings: AppSettings, private val key: String) {
     val hue = FloatOption(settings, "$key.hue", 0f..360f, 0f)
@@ -136,29 +134,28 @@ class ColorOptions(private val settings: AppSettings, private val key: String) {
     }
 }
 
-/** The color panel as a popover: slides up to the bottom of the host's Box on opening and back down on closing (ToolPopover) */
+/** Slides up to the host Box's bottom on opening, down on closing (ToolPopover) */
 fun colorPopup(o: ColorOptions, source: PipetteSource, anchor: Rect): OpenPopup {
     val shown = MutableTransitionState(false).apply { targetState = true }
     return OpenPopup(ToolPopup.Color, anchor, shown) { ColorSelectionPanel(o, source, shown) }
 }
 
-/** The host closes it (press outside, Back); the mode resets to the palette on every opening.
-Pipette: press its button and slide onto the picture — the panel hides, the loupe follows the finger, release picks the color under the crosshair */
+/** The mode resets to the palette on each opening. Pipette: press its button and slide onto the picture — the loupe follows, release picks the color */
 @Composable
 private fun ColorSelectionPanel(o: ColorOptions, source: PipetteSource, shown: MutableTransitionState<Boolean>) {
     var sliders by remember { mutableStateOf(false) }
     var picking by remember { mutableStateOf(false) }
-    val at = remember { mutableStateOf(Offset.Zero) } // finger in the host Box; read only in layout and draw → moves don't recompose
+    val at = remember { mutableStateOf(Offset.Zero) } // read only in layout and draw
     val bounds = rememberBounds()
     val density = LocalDensity.current
     val frame = LocalFrame.current
-    val host = Offset(frame.getLeft(density, LocalLayoutDirection.current).toFloat(), frame.getTop(density).toFloat()) // host Box origin in the window
+    val host = Offset(frame.getLeft(density, LocalLayoutDirection.current).toFloat(), frame.getTop(density).toFloat())
     AnimatedVisibility(shown, Modifier.fillMaxSize().wrapContentSize(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) {
-        // Hidden, not removed while picking: leaving composition would cancel the pipette gesture
+        // Hidden, not removed while picking: leaving composition would cancel the gesture
         Row(Modifier.alpha(if (picking) 0f else 1f).size(PANEL_W, PANEL_H).clip(SmallShape).background(BarBg).consumeTaps().padding(GAP), Arrangement.spacedBy(GAP)) {
             Box(Modifier.weight(1f)) { if (sliders) Sliders(o) else Palette(o) }
             Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
-                // Not clickable: its tap detector would consume the down before this gesture sees it
+                // Not clickable: its tap detector would consume the down first
                 Box(Modifier.size(CELL).trackBounds(bounds).pointerInput(o, source, host) {
                     awaitEachGesture {
                         val down = awaitFirstDown().also { it.consume() }
@@ -188,7 +185,7 @@ private fun Modifier.colorFill(c: Color) = background(c, SmallShape).border(1.dp
 private fun Palette(o: ColorOptions) = Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
     Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
         val c = o.value
-        val tint = if (c.luminance() > 0.5f) Color.Black else Color.White // icons stay visible on any fill
+        val tint = if (c.luminance() > 0.5f) Color.Black else Color.White
         Row(Modifier.size(WIDE, CELL).colorFill(c).plainClickable(o::save).padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Icon(AppIcons.SavePlus, null, Modifier.size(24.dp), tint)
             Icon(AppIcons.Back, null, Modifier.size(24.dp).rotate(180f), tint)
@@ -203,7 +200,7 @@ private fun Swatch(c: Color, onClick: () -> Unit) = Box(Modifier.size(CELL).colo
 
 private class ColorLine(val label: Int, val option: FloatOption, val suffix: String, val gradient: Brush)
 
-/** Labels, fields and sliders go in columns: the sliders start at one x whatever the label lengths */
+/** Columns: the sliders start at one x whatever the label lengths */
 @Composable
 private fun Sliders(o: ColorOptions) = Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
     Box(Modifier.size(WIDE, CELL).colorFill(o.value))
@@ -222,7 +219,7 @@ private fun Sliders(o: ColorOptions) = Row(horizontalArrangement = Arrangement.s
     }
 }
 
-/** Bottom edge [LOUPE_LIFT] above the finger; the crosshair marks the pixel the release picks */
+/** [LOUPE_LIFT] above the finger; the crosshair marks the picked pixel */
 @Composable
 private fun Loupe(at: State<Offset>, source: PipetteSource) = Box(
     Modifier
@@ -236,7 +233,7 @@ private fun Loupe(at: State<Offset>, source: PipetteSource) = Box(
             val inner = CROSS_GAP.toPx()
             val outer = CROSS.toPx()
             fun cross(c: Color, width: Float) = repeat(4) { rotate(90f * it) { drawLine(c, center + Offset(inner, 0f), center + Offset(outer, 0f), width, StrokeCap.Round) } }
-            cross(Color.Black, 3.5.dp.toPx()) // dark outline: the cross stays visible on any color
+            cross(Color.Black, 3.5.dp.toPx()) // dark outline: visible on any color
             cross(Color.White, 1.5.dp.toPx())
         }
         .border(1.dp, TranslucentGray, CircleShape)

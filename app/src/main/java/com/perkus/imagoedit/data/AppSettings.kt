@@ -9,7 +9,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.core.content.edit
 import java.util.Locale
 
-/** The system caches prefs itself → create an instance wherever a value is needed: it always sees current data */
+/** The system caches prefs: create an instance wherever needed */
 class AppSettings(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
@@ -25,7 +25,7 @@ class AppSettings(context: Context) {
         get() = prefs.getString("language", null)
         set(v) = prefs.edit { putString("language", v) }
 
-    /** Stored by name: missing or renamed entry → [default] */
+    /** Missing or renamed → [default] */
     fun <E : Enum<E>> enum(key: String, entries: List<E>, default: E = entries.first()): E = prefs.getString(key, null).let { n -> entries.firstOrNull { it.name == n } } ?: default
     fun setEnum(key: String, v: Enum<*>) = prefs.edit { putString(key, v.name) }
 
@@ -42,7 +42,7 @@ class AppSettings(context: Context) {
     fun setString(key: String, v: String) = prefs.edit { putString(key, v) }
 }
 
-/** Every write is persisted at once: apply is async, a burst of slider writes coalesces */
+/** Each write persisted at once (apply is async) */
 @Stable
 class EnumOption<E : Enum<E>>(private val settings: AppSettings, private val key: String, val entries: List<E>, default: E = entries.first()) {
     private val state = mutableStateOf(settings.enum(key, entries, default))

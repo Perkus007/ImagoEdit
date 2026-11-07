@@ -22,18 +22,17 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import kotlin.math.ceil
 
-private const val CORNER_K = 0.2929f // Прямой угол интерфейса ложится на дугу скругления при отступе r·(1 − 1/√2) ≈ 0.293·r. Если угол всё равно «цепляет» — увеличьте коэффициент
-val LocalFrame = compositionLocalOf { WindowInsets(0, 0, 0, 0) } // Screen frame (px). Dialogs are separate windows, so they read it from here instead of computing it
+private const val CORNER_K = 0.2929f // прямой угол интерфейса ложится на дугу скругления при отступе r·(1 − 1/√2)
+val LocalFrame = compositionLocalOf { WindowInsets(0, 0, 0, 0) } // screen frame, px: dialogs (separate windows) read it here
 
-/** Frame on the sides only: max(camera cutout, screen corner rounding), symmetric — the cutout doesn't shift the UI center.
-Both values are hardware properties: read synchronously from Display, once per window. WindowInsets don't fit here:
-the system delivers them asynchronously and resends them on dialog close and focus change — the frame would "breathe" */
+/** Side frame only: max(camera cutout, corner rounding), symmetric. Hardware values read once from Display: WindowInsets arrive async and resend on dialog close —
+the frame would "breathe" */
 @Composable
 private fun rememberFrame(): WindowInsets {
     val view = LocalView.current
     return remember(view) {
         val display = view.display
-        // Cutout depth = max over four sides: rotation-independent (top in portrait, side in landscape)
+        // Cutout depth = max over the sides: rotation-independent
         val cutout = display?.cutout?.run { maxOf(safeInsetLeft, safeInsetTop, safeInsetRight, safeInsetBottom) } ?: 0
         // RoundedCorner.POSITION_TOP_LEFT..POSITION_BOTTOM_LEFT = 0..3
         val corner = if (display != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
@@ -47,7 +46,7 @@ private fun rememberFrame(): WindowInsets {
 fun ScreenFrame(content: @Composable () -> Unit) {
     val frame = rememberFrame()
     val base = LocalViewConfiguration.current
-    // Min touch target 16×16dp instead of the system 48×48dp: small elements (layer visibility button) respond only within their bounds. 250 ms long press — layer drag in the layers panel
+    // Min touch target 16dp (system 48dp): small elements respond only within their bounds; 250 ms long press for the layer drag
     val viewConfig = remember(base) { object : ViewConfiguration by base {
         override val minimumTouchTargetSize = DpSize(16.dp, 16.dp)
         override val longPressTimeoutMillis = 250L

@@ -69,28 +69,27 @@ import com.perkus.imagoedit.ui.theme.BtnRed
 import com.perkus.imagoedit.ui.theme.SmallShape
 import java.io.File
 
-private const val EXPORT_COLS = 2 // колонок сетки под панелью экспорта: при плитках ≥ 140dp панель ≥ 296dp
+private const val EXPORT_COLS = 2 // колонок под панелью экспорта
 
 @Composable
 fun MainMenuScreen(vm: AppViewModel) {
     var showNew by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<Project?>(null) }
-    var selected by remember { mutableStateOf<Set<Long>?>(null) } // null = normal mode, Set = delete mode
+    var selected by remember { mutableStateOf<Set<Long>?>(null) } // null — normal, Set — delete mode
     var exporting by remember { mutableStateOf(false) }
     var exportId by remember { mutableStateOf<Long?>(null) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
     var lastExport by remember { mutableStateOf<File?>(null) }
-    var showSettings by rememberSaveable { mutableStateOf(false) } // survives Activity recreation (language change)
-    val appContext = LocalContext.current.applicationContext // don't hold the Activity: export may finish after its recreation
+    var showSettings by rememberSaveable { mutableStateOf(false) } // survives recreation (language change)
+    val appContext = LocalContext.current.applicationContext // export may outlive the Activity
     val checker = rememberCheckerBrush(4.dp)
     val pickImage = rememberImagePicker(vm::importImage)
     val ready = selected == null && !exporting && !vm.busy
     val idle = vm.hasAccess && ready
 
-    // The bar is overlaid, not stacked: the export panel may cover it (its buttons are off meanwhile) and gets the screen's whole height
+    // The bar overlays the grid: the export panel may cover it and takes the whole height
     BoxWithConstraints(Modifier.fillMaxSize()) {
-        // In px, so tiles don't shift when the panel opens: each tile is exactly step - gap wide, the remainder goes to the end padding (GridCells.Fixed would spread it over the first tiles).
-        // The export panel takes the place of the last EXPORT_COLS columns; a window without a column to spare keeps the grid, the panel covers it
+        // In px: tiles don't shift when the panel opens (GridCells.Fixed would spread the remainder); the panel takes the last EXPORT_COLS columns
         val density = LocalDensity.current
         val w = constraints.maxWidth
         val gap = with(density) { 16.dp.roundToPx() }
@@ -167,7 +166,7 @@ fun MainMenuScreen(vm: AppViewModel) {
 private fun ProjectTile(p: Project, checker: Brush, vm: AppViewModel, frame: Color?, onClick: () -> Unit, onRename: () -> Unit) = Column {
     val bitmap by produceState(vm.cachedThumb(p), p.id, p.updated) { value = vm.thumb(p) }
     Box(Modifier.fillMaxWidth().aspectRatio(1f).then(if (frame != null) Modifier.centeredBorder(3.dp, frame) else Modifier).clip(SmallShape).clickable(onClick = onClick), contentAlignment = Alignment.Center) {
-        // padding = half the border: its outer half stays inside the tile's clip
+        // Half the border: its outer half stays inside the tile's clip
         Box(Modifier.padding(1.dp).aspectRatio(p.width.toFloat() / p.height).centeredBorder(2.dp, BarBg).clip(SmallShape).background(checker)) {
             bitmap?.let { Image(it, null, Modifier.fillMaxSize()) }
         }
@@ -190,7 +189,7 @@ private fun AccessWarning(modifier: Modifier) {
     }
 }
 
-/** This app's access page; missing on some firmwares → the general app list */
+/** This app's access page; missing on some firmwares → the app list */
 private fun Context.openAccessSettings() {
     try {
         startActivity(Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, "package:$packageName".toUri()))

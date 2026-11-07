@@ -32,16 +32,15 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private val ANTS_DASH = 4.dp // длина штриха контура выделения (по горизонтали и вертикали); в dp — одинаково заметен на экране любой плотности
-private const val ANTS_WIDTH = 2f // толщина контура выделения, экранных px при любом масштабе
-const val ANTS_STEP_MS = 60L // контур сдвигается на 1 экранный px за столько мс: ~16 перерисовок в секунду вместо 60
-private const val BAND_ROWS = 256 // полоса перевода контура в выделение, строк холста: рабочий буфер setPath = высота × все отрезки контура
-val FIRST_R = 8.dp // кольцо первой вершины: тап по ней замыкает многоугольник
-val CLOSE_REACH = 24.dp // тап ближе этого к первой вершине замыкает многоугольник: с запасом под палец
-private const val POLY_STEPS = 50 // вершин многоугольника, отменяемых подряд
+private val ANTS_DASH = 4.dp // штрих контура, dp
+private const val ANTS_WIDTH = 2f // экранных px
+const val ANTS_STEP_MS = 60L // сдвиг контура на 1 px за столько мс
+private const val BAND_ROWS = 256 // строк холста: буфер setPath = высота × все отрезки
+val FIRST_R = 8.dp // тап по ней замыкает многоугольник
+val CLOSE_REACH = 24.dp // тап ближе к первой вершине замыкает
+private const val POLY_STEPS = 50 // вершин, отменяемых подряд
 
-/** Pixels whose centers are inside, clipped to the canvas [cw]×[ch]: curves become steps along the canvas grid.
-By bands of rows within the path's bounds, merged by unionAll: in one go a long lasso over a tall canvas would take hundreds of MB */
+/** Px whose centers are inside, clipped to the canvas. By bands of rows merged by unionAll: a long lasso over a tall canvas would take hundreds of MB at once */
 @Suppress("DEPRECATION") // computeBounds(RectF) is API 34+
 private fun Path.toRegion(cw: Int, ch: Int): Region {
     val b = RectF().also { computeBounds(it, true) }
@@ -51,16 +50,15 @@ private fun Path.toRegion(cw: Int, ch: Int): Region {
         .unionAll()
 }
 
-// One shader for any outline: a march step only moves its matrix, the path isn't re-dashed. A unit pattern: the matrix sizes it to ANTS_DASH
+// One shader for any outline: a march step only moves its matrix
 private val antsMatrix = Matrix()
 private val antsPaint = Paint().apply {
     style = Paint.Style.STROKE
-    isAntiAlias = false // crisp; Paint() anti-aliases since API 31
+    isAntiAlias = false // Paint() anti-aliases since API 31
     shader = LinearGradient(0f, 0f, 1f, 1f, intArrayOf(Color.BLACK, Color.BLACK, Color.WHITE, Color.WHITE), floatArrayOf(0f, 0.5f, 0.5f, 1f), Shader.TileMode.REPEAT)
 }
 
-/** Diagonal black-and-white stripes fixed to the screen, shifted by [phase] screen px along the diagonal: along the outline they flow out of the top-left corner both ways into the bottom-right one.
-[outline] in canvas px, the canvas origin at [offset] on screen, [scale] screen px per canvas px */
+/** Diagonal stripes fixed to the screen, shifted by [phase]; [outline] in canvas px at [offset], [scale] */
 fun DrawScope.drawAnts(outline: Path, offset: Offset, scale: Float, phase: Int) {
     val dash = ANTS_DASH.toPx()
     antsMatrix.setScale(dash, dash)
@@ -77,28 +75,26 @@ fun DrawScope.drawAnts(outline: Path, offset: Offset, scale: Float, phase: Int) 
     }
 }
 
-/** Canvas gesture of the selection styles, canvas px. The kind is fixed at the touch: inside the selection with both mode buttons off — moving it, otherwise a new shape.
-Polygon: a tap places the first vertex; then each touch adds one — a tap where it was, a drag one that follows the finger until it lifts — released on the first vertex, it closes the polygon. The unfinished polygon outlives gestures until [dropPolygon].
-Wand: only a tap on the canvas selects, not one inside the selection with both mode buttons off — [onWand] at its canvas px with the options and how to join the selection.
-Brush: BrushTool paints the shape (see [moves]); here only a touch that moves the selection, a tap on it deselects, as the wand's.
-[shape], [trace], [poly] and [shift] are read only in the draw phase. [idle] — no overlay is open: a press that closes one isn't a gesture. [onSelect] commits a new selection */
+/** Selection styles' canvas gesture, canvas px; the kind is fixed at the touch: inside the selection with both modes off — moving it, else a new shape.
+Polygon: each touch adds a vertex (a drag one follows the finger); released on the first vertex — closes. Wand: a tap → [onWand]. Brush: BrushTool paints, here only moving.
+[shape], [trace], [poly], [shift] are read in the draw phase. [idle] — no overlay open */
 @Stable
 class SelectTool(private val o: SelectionOptions, private val cw: Int, private val ch: Int, private val idle: () -> Boolean, private val onSelect: (Selection?) -> Unit,
     private val onWand: (x: Int, y: Int, tolerance: Int, contiguous: Boolean, combine: Region.Op) -> Unit) {
-    var shape by mutableStateOf<Selection?>(null) // Square, Circle: the new shape while it's drawn
+    var shape by mutableStateOf<Selection?>(null) // Square, Circle while drawn
         private set
-    private var shapePath: Path? = null // [shape]'s own path
-    var trace by mutableStateOf<Path?>(null, neverEqualPolicy()) // Lasso: the line while it's drawn — one Path grows, re-set on each point to redraw
+    private var shapePath: Path? = null
+    var trace by mutableStateOf<Path?>(null, neverEqualPolicy()) // Lasso: one Path grows, re-set to redraw
         private set
-    var shift by mutableStateOf(IntOffset.Zero) // the selection while it's dragged
+    var shift by mutableStateOf(IntOffset.Zero) // while dragged
         private set
-    var poly by mutableStateOf<Path?>(null, neverEqualPolicy()) // Polygon: the line through the vertices — one Path, rebuilt and re-set on each change to redraw
+    var poly by mutableStateOf<Path?>(null, neverEqualPolicy()) // Polygon: rebuilt and re-set to redraw
         private set
     private val corners = ArrayList<Offset>()
-    val firstVertex get() = corners.firstOrNull() // changes only together with [poly]
+    val firstVertex get() = corners.firstOrNull()
     private var adding = false // the last vertex follows the finger
-    private var undoable by mutableIntStateOf(0) // placed vertices that can be undone
-    private val undone = mutableStateListOf<Offset>() // the latest last; a new vertex clears it
+    private var undoable by mutableIntStateOf(0)
+    private val undone = mutableStateListOf<Offset>() // latest last
     val canUndoVertex get() = undoable > 0
     val canRedoVertex get() = undone.isNotEmpty()
 
@@ -108,16 +104,16 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
     private var dragged: Selection? = null
     private var p0 = Offset.Zero
     private var reach = 0f
-    private var last = Offset.Zero // the lasso's last point
+    private var last = Offset.Zero
     private var rect = Rect()
 
-    /** The current selection is hidden while the shape that will replace it is drawn. The live mode: a polygon spans many touches */
+    /** The selection is hidden while its replacement is drawn */
     val replacing get() = (shape != null || trace != null || poly != null) && o.mode.value == SelectMode.New
 
-    /** Since [begin]: the touch moves the selection, it doesn't draw a shape */
+    /** Since [begin]: the touch moves the selection */
     val moves get() = dragged != null
 
-    /** [reach] — CLOSE_REACH in canvas px */
+    /** [reach] — CLOSE_REACH, canvas px */
     fun begin(p: Offset, sel: Selection?, reach: Float) {
         on = idle()
         mode = o.mode.value
@@ -143,13 +139,13 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
         }
         if (o.style.value == SelectStyle.Lasso) {
             val t = trace ?: Path().apply { moveTo(p0.x, p0.y) }.also { last = p0 }
-            if ((p - last).getDistance() < 1f) return // nearer than a canvas px adds no pixels, only edges
+            if ((p - last).getDistance() < 1f) return // under a px adds only edges
             t.lineTo(p.x, p.y)
             last = p
             trace = t
             return
         }
-        // Corners on the nearest canvas pixel boundaries; 1:1 — the longer side both ways, toward the finger
+        // Corners on canvas px boundaries; 1:1 — the longer side both ways
         val x0 = p0.x.roundToInt()
         val y0 = p0.y.roundToInt()
         var dx = p.x.roundToInt() - x0
@@ -164,13 +160,12 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
         rect = r
         val f = RectF(r)
         val rad = o.corner.value.toFloat()
-        // Circle: an oval inscribed in the frame
         val path = Path().apply { if (o.style.value == SelectStyle.Circle) addOval(f, Path.Direction.CW) else addRoundRect(f, rad, rad, Path.Direction.CW) }
         shape = path.toRegion(cw, ch).toSelection()
         shapePath = path
     }
 
-    /** The finger lifted; [tap] — it didn't move. A shape's or a moved selection's outline is reused, not rebuilt */
+    /** [tap] — the finger didn't move */
     fun finish(tap: Boolean) {
         if (!on) return
         val d = dragged
@@ -187,13 +182,13 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
                     undone.clear()
                 }
                 redrawPoly()
-                if (closes && corners.size >= 3) poly?.let { dropPolygon(); commit(it) } // fewer vertices enclose nothing
+                if (closes && corners.size >= 3) poly?.let { dropPolygon(); commit(it) } // fewer enclose nothing
             }
             d == null && style == SelectStyle.Brush -> Unit // BrushTool's stroke
             tap -> {
                 val x = floor(p0.x).toInt()
                 val y = floor(p0.y).toInt()
-                // Off the canvas or on the selection it may move ([dragged]) the wand's tap deselects, as any other style's
+                // Off the canvas or on a movable selection the wand's tap deselects
                 if (style == SelectStyle.Wand && d == null && x in 0 until cw && y in 0 until ch) onWand(x, y, o.tolerance.value, o.contiguous.value, mode.op) else onSelect(null)
             }
             d != null -> if (shift != IntOffset.Zero) onSelect(d.moved(shift.x, shift.y))
@@ -201,8 +196,7 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
         }
     }
 
-    /** [path] closes itself: from the last point straight back to the first. Crossing loops are all inside (non-zero winding). Without it — the drawn [shape].
-    A shape's or a polygon's own path goes along within the canvas (Selection.drawn), joined as the px are; a lasso's doesn't: grown, its hand-made corners would turn spikes */
+    /** [path] closes itself, non-zero winding; without it — [shape]. A shape's or polygon's path goes along (Selection.drawn), a lasso's doesn't: grown, its corners would spike */
     private fun commit(path: Path?) {
         val traced = path?.let { it.close(); it.toRegion(cw, ch) }?.takeUnless { it.isEmpty }
         val own = (if (path == null) shapePath else path.takeIf { o.style.value == SelectStyle.Polygon })?.clipped(Rect(0, 0, cw, ch))
@@ -240,7 +234,7 @@ class SelectTool(private val o: SelectionOptions, private val cw: Int, private v
         undone.clear()
     }
 
-    /** Also drops the vertex that followed the finger: the touch turned out a pinch */
+    /** Also drops the following vertex: the touch was a pinch */
     fun cancel() {
         shape = null
         shapePath = null

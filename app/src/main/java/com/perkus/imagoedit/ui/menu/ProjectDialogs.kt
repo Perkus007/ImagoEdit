@@ -41,14 +41,14 @@ import com.perkus.imagoedit.ui.theme.ScreenBg
 import com.perkus.imagoedit.ui.theme.SmallShape
 import kotlin.math.sqrt
 
-/** A new project's canvas or the open one's new size: [width]×[height] at first */
+/** A new canvas or a new size: [width]×[height] at first */
 @Composable
 fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit, busy: Boolean = false, onOk: (width: Int, height: Int) -> Unit) {
     val dims = remember { mutableStateListOf(width, height) }
-    var link by remember { mutableStateOf<List<Int>?>(listOf(width, height)) } // the sides whose ratio is kept; null — free
+    var link by remember { mutableStateOf<List<Int>?>(listOf(width, height)) } // kept ratio; null — free
 
-    /** Side [i] becomes [v] as far as the limits let it. Free: the other one shrinks to keep the area within MAX_PIXELS.
-    Linked: the other one follows by [link]'s ratio, [v] limited so both fit (not coerceIn: a ratio the limits can't hold, e.g. an imported 1×16000, must not throw) */
+    /** Side [i] → [v] within the limits. Free: the other shrinks to keep MAX_PIXELS; linked: it follows the ratio, [v] limited so both fit (no coerceIn:
+    an unholdable ratio like 1×16000 must not throw) */
     fun put(i: Int, v: Int) {
         val l = link
         if (l == null) {
@@ -63,14 +63,14 @@ fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit,
         dims[1 - i] = ((dims[i] * a + b / 2) / b).toInt().coerceIn(MIN_SIDE, minOf(MAX_SIDE, MAX_PIXELS / dims[i]))
     }
 
-    AppDialog(stringResource(title), onDismiss, width = null, busy = busy) {
+    AppDialog(stringResource(title), onDismiss, width = 448.dp, busy = busy) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(R.string.width, R.string.height).forEachIndexed { i, label ->
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("${stringResource(label)}:", Modifier.width(90.dp), fontSize = 18.sp, textAlign = TextAlign.End)
                         NumField("${dims[i]}", Modifier.width(80.dp).background(ScreenBg, SmallShape), PaddingValues(4.dp), fontSize = 18.sp) { put(i, it.toInt()) }
-                        // The most this side gets: free — the other one kept, linked — the ratio kept. Same font size and vertical padding as the field → same height at any font scale
+                        // The most this side gets; the field's font and padding: same height at any font scale
                         Text("MAX", Modifier.clip(SmallShape).background(BtnGray).clickable { put(i, if (link == null) MAX_PIXELS / dims[1 - i] else MAX_SIDE) }
                             .padding(horizontal = 8.dp, vertical = 4.dp), Color.White, fontSize = 18.sp)
                     }

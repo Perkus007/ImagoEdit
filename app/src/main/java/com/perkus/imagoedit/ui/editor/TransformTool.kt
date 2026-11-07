@@ -48,20 +48,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.withContext
 
-private const val MIN_GROW = -512 // ползунок «Расширить»: сужение контура, px выделения до рамки
+private const val MIN_GROW = -512 // сужение контура, px выделения
 private const val MAX_GROW = 1000
-private const val FOLDED = 2 // рядов панели, пока шеврон не раскрыл ряды 3 и 4
+private const val FOLDED = 2 // рядов, пока шеврон не раскрыл ряды 3 и 4
 private const val UNFOLDED = 4
-private val ROW_W = rowWidth(10) // ряды ползунков вровень с рядом 1: 10 кнопок
-private const val PREVIEW_PIXELS = 1 shl 20 // предпросмотр выделения (расширение, сглаживание, размытие) считается в копии не больше стольких px и растягивается: пересчёт на шаг ползунка — десятки мс
-private val tintPaint = Paint().apply { color = 0x80FF0000.toInt(); isAntiAlias = false } // холст вне выделения
-private val cutPaint = Paint().apply { isAntiAlias = false; isFilterBitmap = true; xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) } // выделенное вырезается из заливки
+private val ROW_W = rowWidth(10) // вровень с рядом 1: 10 кнопок
+private const val PREVIEW_PIXELS = 1 shl 20 // предпросмотр считается в копии не больше стольких px
+private val tintPaint = Paint().apply { color = 0x80FF0000.toInt(); isAntiAlias = false }
+private val cutPaint = Paint().apply { isAntiAlias = false; isFilterBitmap = true; xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
 
-/** What the tool does to the selection before the frame, px of the selection: its outline grown by [grow] (Selection.grown), then smoothed by [smooth], then its edge blurred
-by [blur] (feathered); 0 — not */
+/** Before the frame, selection px: grown by [grow], smoothed by [smooth], edge blurred by [blur]; 0 — not */
 data class Edge(val grow: Int = 0, val blur: Int = 0, val smooth: Int = 0)
 
-/** The tool's persisted settings: the frame's toggles and the edge of the last ✓, the next open starts from it */
+/** Persisted: the frame's toggles and the last ✓'s edge — the next open starts from it */
 @Stable
 class TransformOptions(settings: AppSettings) {
     val frame = FrameOptions(settings, "transform")
@@ -77,10 +76,10 @@ class TransformOptions(settings: AppSettings) {
         }
 }
 
-/** The selection as its Edge makes it, before the frame (canvas px): its outline and a soft edge's coverage with the canvas rect it's stretched over */
+/** The selection as its Edge makes it, before the frame: outline and a soft edge's coverage with its canvas rect */
 private class Edged(val outline: Path, val edge: Pair<Bitmap, Rect>?)
 
-/** The canvas [cw]×[ch] tinted outside what [cut] draws by the paint it's given (canvas px) */
+/** The canvas tinted outside what [cut] draws */
 private fun DrawScope.drawOutside(offset: Offset, scale: Float, cw: Int, ch: Int, cut: android.graphics.Canvas.(Paint) -> Unit) {
     val c = drawContext.canvas.nativeCanvas
     c.save()
@@ -91,8 +90,7 @@ private fun DrawScope.drawOutside(offset: Offset, scale: Float, cw: Int, ch: Int
     c.restore()
 }
 
-/** The Selection transform tool: the selection [sel] changed by its [edge] and placed by the frame as Move places a layer. The frame frames its bounds grown alike ([src]),
-so the grown outline fills it; smoothing and blur change it within. A step: the frame and the edge */
+/** The selection [sel] changed by its [edge] and placed by the frame as Move places a layer; the frame frames its grown bounds ([src]). A step: the frame and the edge */
 @Stable
 class TransformState(cw: Int, ch: Int, private val sel: Selection, private val options: TransformOptions) :
     PlaceState<Pair<ContentTransform, Edge>>(0L, cw, ch, sel.region.bounds.let { ContentTransform.initial(ContentBox(), it.left, it.top, it.width(), it.height()) }, MAX_OPACITY),
@@ -116,7 +114,7 @@ class TransformState(cw: Int, ch: Int, private val sel: Selection, private val o
         reedge(options.edge)
     }
 
-    /** What the frame frames: where the selection grown by its growth lies (Selection.grownBounds) */
+    /** Where the selection grown by its growth lies */
     val src: Rect
         get() {
             val g = edge.grow
@@ -134,13 +132,13 @@ class TransformState(cw: Int, ch: Int, private val sel: Selection, private val o
             edge = v.second
         }
 
-    /** [e] for the edge, each value within its limits: one step */
+    /** Each value within its limits: one step */
     fun edgeTo(e: Edge) = edit { reedge(e) }
 
     /** A slider's drag: one step on finish */
     fun slideEdge(e: Edge) = hold { reedge(e) }
 
-    /** A new growth moves the frame where the grown bounds lie, placed as before: the selection grows where it is */
+    /** A new growth moves the frame onto the grown bounds: the selection grows where it is */
     private fun reedge(e: Edge) {
         val old = src
         edge = Edge(e.grow.coerceIn(MIN_GROW, MAX_GROW), e.blur.coerceIn(0, MAX_FEATHER), e.smooth.coerceIn(0, MAX_FEATHER))
@@ -149,10 +147,9 @@ class TransformState(cw: Int, ch: Int, private val sel: Selection, private val o
 
     fun save() = keep(options.frame)
 
-    /** While it runs: the shape found anew for the latest edge, one at a time, on a copy at most PREVIEW_PIXELS px; grown again only for a new growth, smoothed only for a new
-    growth or smoothing */
+    /** While running: the shape for the latest edge on a copy ≤ PREVIEW_PIXELS; regrown only for a new growth, resmoothed only for a new growth or smoothing */
     suspend fun preview() {
-        var at = Edge() // what [grown] and [smoothed] are for
+        var at = Edge()
         var grown = sel.outline
         var smoothed = grown
         snapshotFlow { edge }.conflate().collect { e ->
@@ -169,7 +166,7 @@ class TransformState(cw: Int, ch: Int, private val sel: Selection, private val o
         }
     }
 
-    // The shape placed by the frame — its outline and a soft edge's px → canvas px — for the frame, growth and shape they were built for: rebuilt in the draw phase only when one changes
+    // The placed shape (outline, soft edge px → canvas px), rebuilt in the draw phase only when the frame, growth or shape changes
     private val placing = Matrix()
     private val edgePlacing = Matrix()
     private val placed = Path()
@@ -205,7 +202,7 @@ class TransformState(cw: Int, ch: Int, private val sel: Selection, private val o
     }
 }
 
-/** Move's panel without opacity: a row to grow the selection under the buttons, the chevron unfolds one to blur and smooth its edge over the fields; slides in */
+/** Move's panel without opacity: a growth row under the buttons; the chevron unfolds blur and smoothing over the fields */
 @Composable
 fun TransformOverlay(s: TransformState, onCancel: () -> Unit, onConfirm: () -> Unit) = Box(Modifier.fillMaxSize()) {
     if (s.precise) Nudges(s, if (s.expanded) UNFOLDED else FOLDED)
@@ -222,7 +219,7 @@ fun TransformOverlay(s: TransformState, onCancel: () -> Unit, onConfirm: () -> U
     }
 }
 
-/** One of the edge's values: its [label] (FieldText, FieldIcon), field and slider; [set] — the edge with it */
+/** One edge value: [label], field and slider; [set] — the edge with it */
 @Composable
 private fun EdgeSlider(s: TransformState, label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, set: Edge.(Int) -> Edge) =
     PxSlider(label, value, range, modifier, s::finish, { s.slideEdge(s.edge.set(it)) }) { s.edgeTo(s.edge.set(it)) }

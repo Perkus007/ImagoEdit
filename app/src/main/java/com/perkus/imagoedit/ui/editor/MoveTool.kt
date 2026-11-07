@@ -23,17 +23,17 @@ import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.roundToInt
 
-private const val ROTATE = 8 // жест «поворот»
-private const val MIN_SIZE = 1f // минимальная сторона содержимого, px холста
+private const val ROTATE = 8
+private const val MIN_SIZE = 1f // px холста
 
-private val ROT_HIT = 14.dp // радиус зоны касания значка поворота (диаметр 28dp)
-private val ROT_DIST = 44.dp // от правого маркера до значка поворота (экранное расстояние, не зависит от зума)
+private val ROT_HIT = 14.dp // радиус касания значка поворота
+private val ROT_DIST = 44.dp // от правого маркера до значка поворота, экранные dp
 private val ROT_R = 14.dp
-private val ROT_ICON = 24.dp // сторона квадрата иконки CurveArrow внутри диска (сама стрелка занимает ~90 % квадрата)
-private const val ICON_VIEWPORT = 24f // сторона viewBox иконок AppIcons
-private val rotIconPath = PathParser().addPathNodes((AppIcons.CurveArrow.root[0] as VectorPath).pathData).toPath().asAndroidPath() // контур CurveArrow: рисуется своей кистью без сглаживания
+private val ROT_ICON = 24.dp
+private const val ICON_VIEWPORT = 24f
+private val rotIconPath = PathParser().addPathNodes((AppIcons.CurveArrow.root[0] as VectorPath).pathData).toPath().asAndroidPath() // рисуется своей кистью без сглаживания
 
-private const val ROT_SNAP_DEG = 2f // порог прилипания угла к 0/90/180/270° (в градусах)
+private const val ROT_SNAP_DEG = 2f // °: прилипание к 0/90/180/270
 
 // Screen px from the canvas origin
 private fun ContentTransform.rotPoint(scale: Float, dist: Float) = handle(3) * scale + dir() * dist
@@ -46,19 +46,19 @@ private fun norm(a: Float): Float {
 private fun snapAngle(raw: Float, snap: Boolean): Float {
     if (snap) {
         val ortho = (raw / 90f).roundToInt() * 90f
-        if (abs(raw - ortho) <= ROT_SNAP_DEG) return norm(ortho) // exact value → the ortho check in resized() works
+        if (abs(raw - ortho) <= ROT_SNAP_DEG) return norm(ortho) // exact: the ortho check in resized() works
     }
     return norm(raw.roundToInt().toFloat())
 }
 
-/** A layer's content placed by its frame: handles, rotation icon, flips, per-pixel nudges, opacity.
-[id] — the Layer.id of what it places, for an image or a text being added — of its future layer, 0 — no layer's (the selection). [S] — a step: the frame, opacity and what the tool adds */
+/** A layer's content placed by its frame: handles, rotation, flips, nudges, opacity. [id] — the placed Layer.id (a new image's or text's future one), 0 — the selection.
+[S] — a step: the frame, opacity and what the tool adds */
 @Stable
 abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTransform, initialOpacity: Int) :
     FrameState<S>(cw, ch, initial, free = false, min = MIN_SIZE, inside = false) {
-    var opacity by mutableIntStateOf(initialOpacity) // the canvas reads it in the draw phase (preview); it reaches the layer only on ✓
+    var opacity by mutableIntStateOf(initialOpacity) // read in the draw phase; reaches the layer on ✓
         protected set
-    var precise by mutableStateOf(false) // per-pixel nudge mode
+    var precise by mutableStateOf(false)
 
     val alpha get() = opacity / MAX_OPACITY.toFloat()
 
@@ -74,7 +74,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
 
     override fun dragged(mode: Int, start: ContentTransform, p0: Offset, p: Offset, thr: Float): ContentTransform {
         if (mode != ROTATE) return super.dragged(mode, start, p0, p, thr)
-        // Angle from center to finger: add the DELTA to the start angle so the icon doesn't jump under the finger
+        // Add the angle DELTA to the start angle: the icon doesn't jump under the finger
         val a0 = atan2(p0.y - start.cy, p0.x - start.cx)
         val a = atan2(p.y - start.cy, p.x - start.cx)
         return start.copy(angle = snapAngle(start.angle + (a - a0) / DEG, !snapOff))
@@ -82,7 +82,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
 
     fun nudge(dx: Float, dy: Float) = edit { t = t.copy(cx = t.cx + dx, cy = t.cy + dy) }
 
-    // Flip around SCREEN axes: the frame mirrors (angle negates), pixels inside via the flag
+    // Flip around screen axes: the frame mirrors (angle negates), pixels via the flag
     fun flipH() = edit { t = t.copy(angle = norm(-t.angle), flipH = !t.flipH) }
     fun flipV() = edit { t = t.copy(angle = norm(-t.angle), flipV = !t.flipV) }
 
@@ -97,7 +97,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
         }
     }
 
-    /** Resizes without moving the bounds' top-left: X and Y stay the same after W/H input */
+    /** Keeps the bounds' top-left: X and Y stay after W/H input */
     protected fun resize(kw: Float, kh: Float) {
         val old = t.bounds()
         val n = t.copy(w = (t.w * kw).coerceIn(MIN_SIZE, MAX_SIZE), h = (t.h * kh).coerceIn(MIN_SIZE, MAX_SIZE))
@@ -105,7 +105,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
         t = n.copy(cx = n.cx + old.left - b.left, cy = n.cy + old.top - b.top)
     }
 
-    /** The handles and the rotation icon, on the native canvas: Compose draws anti-aliased only, these are crisp. None in the per-pixel nudge mode or with nothing to frame */
+    /** On the native canvas: crisp, not anti-aliased. None in the nudge mode or with nothing to frame */
     override fun DrawScope.drawOverlay(s: Float) {
         if (precise || empty) return
         drawHandles(t, s)
@@ -116,7 +116,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
         c.drawCircle(rc.x, rc.y, r, overlayPaint)
         overlayPaint.outline(HANDLE_LINE.toPx())
         c.drawCircle(rc.x, rc.y, r, overlayPaint)
-        // CurveArrow's visible part is centered in its viewport → aligning the icon square's center with the disc center is enough
+        // CurveArrow is centered in its viewport: align the squares' centers
         val side = ROT_ICON.toPx()
         c.save()
         c.translate(rc.x - side / 2, rc.y - side / 2)
@@ -127,7 +127,7 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
     }
 }
 
-/** The Move tool on layer [layer] (index; for an image being added — of its future layer). A step: the frame and opacity */
+/** Move on layer [layer] (index; an added image — its future one). A step: the frame and opacity */
 @Stable
 class MoveState(val layer: Int, id: Long, cw: Int, ch: Int, private val initial: ContentTransform, private val initialOpacity: Int = MAX_OPACITY) :
     PlaceState<Pair<ContentTransform, Int>>(id, cw, ch, initial, initialOpacity) {

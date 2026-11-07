@@ -9,15 +9,14 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import com.perkus.imagoedit.R
 
-private const val VOLUME = 0.2f // громкость звуков отклика: 20 %
-private const val SILENCE_FRAMES = 4800 // длина петли тишины в кадрах (~0.1 с)
+private const val VOLUME = 0.2f // громкость, 0..1
+private const val SILENCE_FRAMES = 4800
 
-// Shared by the pool and the silent track: same attributes + fast flag (SoundPool requests it itself) → both land on the same output
+// Same attributes + fast flag for the pool and the silent track: both land on the same output
 private val ATTRS = AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()
 
-/** SoundPool, not MediaPlayer: MediaPlayer.create blocks the main thread. Sounds are preloaded in init (from onCreate): load is async, play before it completes is silent.
-After ~3 s without sound the system puts the audio output into standby; waking it delays the next sound (two quick taps then overlap).
-So while the app is visible with sounds on, a looping silent track keeps the output awake */
+/** SoundPool: MediaPlayer.create blocks the main thread; sounds preload in init (play before load is silent). The output sleeps after ~3 s of silence and waking
+it delays a sound, so while visible with sounds on a looping silent track keeps it awake */
 object Feedback {
     private lateinit var settings: AppSettings
     private lateinit var vibrator: Vibrator
@@ -25,7 +24,7 @@ object Feedback {
     private lateinit var silence: AudioTrack
     private var tapSound = 0
     private var doneSound = 0
-    private val tapVibe = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK) // short crisp click: doesn't blur on rapid repeated taps
+    private val tapVibe = VibrationEffect.createPredefined(VibrationEffect.EFFECT_CLICK) // doesn't blur on rapid taps
     private val doneVibe = VibrationEffect.createPredefined(VibrationEffect.EFFECT_DOUBLE_CLICK)
 
     fun init(ctx: Context) {
@@ -36,7 +35,7 @@ object Feedback {
         pool = SoundPool.Builder().setMaxStreams(2).setAudioAttributes(ATTRS).build()
         tapSound = pool.load(app, R.raw.tap, 1)
         doneSound = pool.load(app, R.raw.export1, 1)
-        // Static buffer of zeros looped forever: plays from shared memory, no app thread feeds it. No sample rate → the output's native one, so the fast path isn't denied
+        // Zeros looped from shared memory; no sample rate → the output's native one, so the fast path isn't denied
         silence = AudioTrack.Builder()
             .setAudioAttributes(ATTRS)
             .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())

@@ -45,12 +45,12 @@ import com.perkus.imagoedit.ui.theme.SmallShape
 import com.perkus.imagoedit.ui.theme.TranslucentGray
 import java.io.File
 
-/** Non-modal panel: the project grid stays interactive. [project] — the one to export */
+/** Non-modal: the grid stays interactive */
 @Composable
 fun ExportPanel(s: ExportSettings, busy: Boolean, project: Project?, last: File?, onChange: (ExportSettings) -> Unit, onCancel: () -> Unit, onExport: () -> Unit, modifier: Modifier = Modifier) {
     var info by remember { mutableStateOf(false) }
     val canExport = project != null
-    // The border keeps the card apart from the top bar it may cover: both are BarBg
+    // The border sets the card apart from the bar it may cover (both BarBg)
     DialogCard(stringResource(R.string.export_image), modifier, titleEnd = { IconBtn(AppIcons.Info) { info = true } }, borderColor = ScreenBg) {
         ButtonRow { ExportFormat.entries.forEach { f -> DialogButton(f.label, if (f == s.format) BtnGreen else BtnGray, Modifier.weight(1f)) { if (!busy) onChange(s.copy(format = f)) } } }
         if (s.format != ExportFormat.PNG) ParamRow(stringResource(R.string.quality), s.quality, EXPORT_MIN_QUALITY..100, !busy, "${s.quality}%") { onChange(s.copy(quality = it)) }

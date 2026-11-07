@@ -79,13 +79,13 @@ import com.perkus.imagoedit.ui.theme.TranslucentGray
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private const val UNFOLD_MS = 150 // разворачивание списка инструментов: короче анимаций панелей, палец уже ведёт по списку
-private val PANEL_GAP = 4.dp // зазор между панелью и подсказкой, окном настроек или меню верхней панели
+private const val UNFOLD_MS = 150 // короче анимаций панелей: палец уже ведёт по списку
+private val PANEL_GAP = 4.dp // между панелью и подсказкой, окном настроек или меню
 private val TIP_SHAPE = RoundedCornerShape(4.dp)
-private val ROUND_BTN = 50.dp // круглая кнопка настройки инструмента
-private val SECTION_GAP = 8.dp // промежуток между секциями настроек
-private val ITEM_SHAPE = RoundedCornerShape(4.dp) // подложка выбранного стиля в списке
-private val MENU_ICON_CENTER = 28.dp // центр иконки пункта меню от левого края карточки: отступ Popover 8 + отступ MenuItem 8 + половина иконки 12
+private val ROUND_BTN = 50.dp
+private val SECTION_GAP = 8.dp
+private val ITEM_SHAPE = RoundedCornerShape(4.dp)
+private val MENU_ICON_CENTER = 28.dp // отступ Popover 8 + отступ MenuItem 8 + половина иконки 12
 
 /** name is persisted */
 enum class Tool(val icon: ImageVector, val title: Int) {
@@ -111,46 +111,45 @@ interface ToolStyle {
     val title: Int
 }
 
-/** [inBar]: top bar menu (Edit, Selection, Tools3); [own]: the content places itself, no card around it (the palette, the Text tool's font list and spacing/weight) */
+/** [inBar]: a top bar menu; [own]: the content places itself, no card */
 enum class ToolPopup(val inBar: Boolean = false, val own: Boolean = false) {
     Styles, Corners, Tolerance, Brush, Color(own = true), Font(own = true), Type(own = true), Edit(true), Selection(true), Tools3(true)
 }
 
-/** [shown] — the content slides itself in and out by it (the color panel, the font list) */
+/** [shown] — the content slides in and out by it */
 class OpenPopup(val kind: ToolPopup, val anchor: Rect, val shown: MutableTransitionState<Boolean>? = null, val content: @Composable () -> Unit)
 
-/** A drag from the active tool unfolds the others underneath at once, no hold needed; the finger slides over them without lifting, release over a tool selects it.
-Only the finger's height counts: drifting sideways doesn't lose the tool. A tap toggles the same list */
+/** A drag from the active tool unfolds the others at once; release over one selects it, only the finger's height counts. A tap toggles the list */
 @Composable
 fun ToolsPanel(tool: EnumOption<Tool>, options: ToolOptions, picture: PipetteSource, select: SelectTool, popup: ToolPopup?, onPopup: (OpenPopup) -> Unit, modifier: Modifier = Modifier) = Column(modifier.fillMaxWidth()) {
     val haptic = LocalHapticFeedback.current
     val current = tool.value
     val others = remember(current) { Tool.entries - current }
     var picking by remember { mutableStateOf(false) }
-    var hover by remember { mutableIntStateOf(-1) } // index in others under the finger, -1 = none
-    // Read in the draw phase → no recomposition
+    var hover by remember { mutableIntStateOf(-1) } // index in others, -1 = none
+    // Read in the draw phase
     val unfold = animateFloatAsState(if (picking) 1f else 0f, if (picking) tween(UNFOLD_MS) else snap(), label = "tools")
 
-    // plainClickable outside pointerInput: the drag consumes its moves first, so a drag doesn't toggle the list too
+    // plainClickable outside pointerInput: the drag consumes its moves first, so a drag doesn't toggle the list
     ToolCell(current, true, Modifier.plainClickable { hover = -1; picking = !picking }.pointerInput(tool, others) {
         detectVerticalDragGestures(
             onDragStart = { hover = -1; picking = true },
             onDragEnd = { picking = false; others.getOrNull(hover)?.let { tool.value = it } },
             onDragCancel = { picking = false }
         ) { change, _ ->
-            // The list is stacked under this cell, all cells alike: others[i] spans (i + 1)·height .. (i + 2)·height. Above the list floor gives ≤ -1
+            // others[i] spans (i + 1)·height .. (i + 2)·height; above the list floor gives ≤ -1
             val i = (floor(change.position.y / size.height).toInt() - 1).takeIf { it in others.indices } ?: -1
             if (i != hover) { hover = i; if (i >= 0) haptic.performHapticFeedback(HapticFeedbackType.SegmentTick) }
         }
     })
     if (picking) Column(Modifier.graphicsLayer { scaleY = unfold.value; transformOrigin = TransformOrigin(0.5f, 0f) }) {
         others.forEachIndexed { i, t -> ToolCell(t, i == hover, Modifier.plainClickable { picking = false; tool.value = t }, tip = i == hover) }
-    } else Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), Arrangement.spacedBy(SECTION_GAP), Alignment.CenterHorizontally) { // each child is one section; round buttons are centered here
+    } else Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), Arrangement.spacedBy(SECTION_GAP), Alignment.CenterHorizontally) { // each child a section
         when (current) {
             Tool.Selection -> SelectionPanel(options.selection, select, popup, onPopup)
             Tool.Drawing -> {
                 BrushBtn(options.drawing, popup, onPopup)
-                // The fill is read in the draw phase: follows the panel's sliders live without recomposition
+                // Read in the draw phase: follows the sliders without recomposition
                 RoundBtn(null, false, { options.color.value }) { onPopup(colorPopup(options.color, picture, it)) }
             }
             Tool.Stamp -> StampPanel(options.stamp, popup, onPopup)
@@ -168,7 +167,7 @@ private fun ToolCell(tool: Tool, active: Boolean, modifier: Modifier = Modifier,
             Icon(tool.icon, null, Modifier.size(24.dp), color)
             PanelLabel(stringResource(tool.title), color)
         }
-        // The cell spans the side bar → the tip starts past its edge. Measured unbounded: not squeezed to the cell width
+        // The tip starts past the side bar's edge; measured unbounded: not squeezed to the cell
         if (tip) Text(
             stringResource(tool.title),
             Modifier.align(Alignment.CenterStart).offset(x = SIDEBAR_W + PANEL_GAP).wrapContentWidth(Alignment.Start, unbounded = true).background(Color.White, TIP_SHAPE).padding(4.dp),
@@ -176,7 +175,7 @@ private fun ToolCell(tool: Tool, active: Boolean, modifier: Modifier = Modifier,
         )
     }
 
-/** softWrap off + Ellipsis makes Compose force a single line, so a multi-line label needs softWrap on */
+/** softWrap off + Ellipsis forces a single line: multi-line needs softWrap on */
 @Composable
 fun PanelLabel(text: String, color: Color = Color.Unspecified, maxLines: Int = 1) = Text(text, Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp), color, fontSize = 12.sp, lineHeight = 12.sp, textAlign = TextAlign.Center, maxLines = maxLines, softWrap = maxLines > 1, overflow = TextOverflow.Ellipsis)
 
@@ -197,7 +196,7 @@ fun <E> StyleBtn(o: EnumOption<E>, open: ToolPopup?, onOpen: (OpenPopup) -> Unit
     }
 }
 
-/** [indication] = null for one-shot actions: only a choice shows a pressed or selected state */
+/** [indication] = null for one-shot actions */
 @Composable
 fun MenuItem(s: ToolStyle, selected: Boolean = false, enabled: Boolean = true, indication: Indication? = LocalIndication.current, onClick: () -> Unit) {
     val color = Color.Black.copy(alpha = if (enabled) 1f else DISABLED_ALPHA)
@@ -229,9 +228,7 @@ fun PopupBtn(kind: ToolPopup, icon: ImageVector, open: ToolPopup?, onOpen: (Open
 @Composable
 fun ParamRow(label: String, o: IntOption, suffix: String = "") = SliderRow(o.value, o.range, suffix, label, onChange = { o.value = it }) { o.value = it.roundToInt() }
 
-/** [p] — the open popup or null. Choices apply at once; closes only by a press outside or Back (NumPad ✓ keeps it open).
-Card width = its widest row: no slack after short slider labels, long ones aren't cut.
-One with [OpenPopup.shown] (always own) stays composed once closed, without its guard, until it has slid away */
+/** [p] — the open popup or null; closes by a press outside or Back. Card width = its widest row. One with [OpenPopup.shown] stays composed until slid away */
 @Composable
 fun ToolPopover(p: OpenPopup?, onDismiss: () -> Unit) {
     var sliding by remember { mutableStateOf<OpenPopup?>(null) }

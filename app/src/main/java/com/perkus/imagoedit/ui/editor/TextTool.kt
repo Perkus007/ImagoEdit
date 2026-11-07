@@ -37,14 +37,14 @@ private const val FAVORITES_SEP = '/' // в именах файлов его н�
 /** name is persisted */
 enum class FontTab(val title: Int) { System(R.string.fonts_system), User(R.string.fonts_user), Favorites(R.string.fonts_favorites) }
 
-/** name is persisted. Start/End follow each paragraph's direction */
+/** name is persisted. Start/End follow the paragraph's direction */
 enum class TextAlignment(val icon: ImageVector, val layout: Layout.Alignment) {
     Start(AppIcons.TextAlignJustifyStart, Layout.Alignment.ALIGN_NORMAL),
     Center(AppIcons.TextAlignJustifyCenter, Layout.Alignment.ALIGN_CENTER),
     End(AppIcons.TextAlignJustifyEnd, Layout.Alignment.ALIGN_OPPOSITE)
 }
 
-/** Persisted: TextState takes them on opening, save gives them back. [scroll] lives while the editor is open */
+/** Persisted: TextState takes them on opening, save gives them back */
 @Stable
 class TextOptions(private val settings: AppSettings) {
     val color = ColorOptions(settings, "text.color")
@@ -54,7 +54,7 @@ class TextOptions(private val settings: AppSettings) {
     val angle = FloatOption(settings, "text.angle", -180f..180f, 0f)
     val opacity = IntOption(settings, "text.opacity", 0..MAX_OPACITY, MAX_OPACITY)
     val weight = IntOption(settings, "text.weight", FontStyle.FONT_WEIGHT_MIN..FontStyle.FONT_WEIGHT_MAX, FontStyle.FONT_WEIGHT_NORMAL)
-    val spacing = IntOption(settings, "text.spacing", -50..200, 0) // между буквами, % кегля
+    val spacing = IntOption(settings, "text.spacing", -50..200, 0) // % кегля
     val frame = FrameOptions(settings, "text")
     val scroll = FontTab.entries.map { LazyListState() }
     var font = settings.string("text.font") ?: DEFAULT_FONT // AppFont.key
@@ -70,11 +70,11 @@ class TextOptions(private val settings: AppSettings) {
     }
 }
 
-/** [weight] is kept as set, each font clamps it (AppFont.at): another font may take it whole. [spacing] — % of the font size */
+/** [weight] is kept as set, each font clamps it (AppFont.at) */
 data class TextContent(val text: String, val font: AppFont, val weight: Int, val align: TextAlignment, val spacing: Int) {
     val typeface get() = font.at(weight)
 
-    /** A new one per call: a TextLayout is one thread's. Blank → [placeholder]'s, for the frame */
+    /** A new one per call: a TextLayout is one thread's. Blank → [placeholder]'s */
     fun layout(placeholder: String = "") = TextLayout(text.ifBlank { placeholder }, typeface, align.layout, spacing / 100f)
 }
 
@@ -85,8 +85,8 @@ private fun firstFrame(cw: Int, ch: Int, l: TextLayout, o: TextOptions): Content
     return ContentTransform(cw / 2f, ch / 2f, l.w * k, l.h * k, o.angle.value)
 }
 
-/** [content] placed by the frame as Move places an image: the canvas draws it live (drawLive), ✓ renders it into a new layer (AppViewModel.addText).
-Blank shows nothing. The color isn't a step. [layer] — the index its layer will get; [blocked] — a touch then closes a popover, the frame stays. A step: the frame, opacity, content */
+/** [content] placed by the frame as Move places an image, drawn live (drawLive), rendered on ✓ (AppViewModel.addText). The color isn't a step.
+[layer] — the index its layer will get; [blocked] — a touch then only closes a popover. A step: the frame, opacity, content */
 @Stable
 class TextState(val layer: Int, id: Long, cw: Int, ch: Int, val options: TextOptions, val fonts: Fonts, private val placeholder: String, private val blocked: () -> Boolean) :
     PlaceState<Triple<ContentTransform, Int, TextContent>>(id, cw, ch, firstFrame(cw, ch, options.last(fonts).layout(placeholder), options), options.opacity.value) {
@@ -96,7 +96,7 @@ class TextState(val layer: Int, id: Long, cw: Int, ch: Int, val options: TextOpt
 
     override val empty get() = content.text.isBlank()
 
-    /** Font size, canvas px */
+    /** Canvas px */
     val size get() = TEXT_REF * t.h / layout.h
 
     val color get() = options.color.value
@@ -123,15 +123,15 @@ class TextState(val layer: Int, id: Long, cw: Int, ch: Int, val options: TextOpt
 
     fun setWeight(w: Int) = edit { refit(content.copy(weight = content.font.weights?.let { w.coerceIn(it) } ?: w)) }
 
-    /** The slider's drag: one step on finish */
+    /** One step on finish */
     fun slideWeight(w: Int) = hold { refit(content.copy(weight = w)) }
 
     fun setSpacing(v: Int) = edit { refit(content.copy(spacing = v.coerceIn(options.spacing.range))) }
 
-    /** The slider's drag: one step on finish */
+    /** One step on finish */
     fun slideSpacing(v: Int) = hold { refit(content.copy(spacing = v)) }
 
-    /** The frame keeps its center, angle and stretch */
+    /** Keeps the frame's center, angle and stretch */
     private fun refit(c: TextContent) {
         val old = layout
         content = c
@@ -150,13 +150,13 @@ class TextState(val layer: Int, id: Long, cw: Int, ch: Int, val options: TextOpt
         keep(options.frame)
     }
 
-    /** As TextLayout.render bakes it. The opacity applies to the text as a whole (the layer's on ✓): overlapping glyphs don't darken */
+    /** As TextLayout.render bakes it; opacity applies to the text as a whole */
     fun DrawScope.drawLive(s: Float, cw: Int, ch: Int) {
         if (empty) return
         val l = layout
         val t = t
         clipRect(0f, 0f, cw * s, ch * s) {
-            // The chain of ContentTransform.matrix
+            // ContentTransform.matrix's chain
             withTransform({
                 translate(t.cx * s, t.cy * s)
                 rotate(t.angle, Offset.Zero)

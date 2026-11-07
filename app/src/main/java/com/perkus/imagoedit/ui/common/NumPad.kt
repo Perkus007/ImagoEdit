@@ -45,7 +45,7 @@ import com.perkus.imagoedit.ui.theme.SmallShape
 
 private val KEY = 36.dp
 private val GAP = 3.dp
-private val PAD = 6.dp // внутренний отступ карточки
+private val PAD = 6.dp
 private val KEYS = listOf(listOf("1", "2", "3", "✓"), listOf("4", "5", "6", "←"), listOf("7", "8", "9", "DEL"), listOf("0", ".", "-"))
 
 private fun edit(s: String, key: String): String = when (key) {
@@ -56,20 +56,20 @@ private fun edit(s: String, key: String): String = when (key) {
     else -> if (s.trimStart('-') == "0") s.dropLast(1) + key else s + key
 }.take(12)
 
-/** One per window: fields sit deep in cards, the overlay must lie at the root beside what's below */
+/** One per window, at the root */
 private class NumPadSlot {
     var content by mutableStateOf<(@Composable () -> Unit)?>(null)
     var cancel = {}
 }
 private val LocalNumPad = staticCompositionLocalOf<NumPadSlot> { error("NumPadHost missing") }
 
-/** Call inside the window's root Box: the open NumPad is emitted as a sibling above [content] */
+/** Inside the window's root Box: the NumPad is emitted above [content] */
 @Composable
 fun NumPadHost(content: @Composable () -> Unit) {
     val slot = remember { NumPadSlot() }
     CompositionLocalProvider(LocalNumPad provides slot, content)
-    Box(Modifier.fillMaxSize().dismissOnPress { slot.cancel() }) // permanent (see dismissOnPress); no-op while closed
-    slot.content?.let { key(it) { it() } } // key: another field's NumPad doesn't inherit `fresh`
+    Box(Modifier.fillMaxSize().dismissOnPress { slot.cancel() }) // permanent (see dismissOnPress)
+    slot.content?.let { key(it) { it() } } // another field's NumPad doesn't inherit fresh
 }
 
 private fun Modifier.nextTo(anchor: Rect, frame: WindowInsets, gap: Dp = 4.dp) = anchored(anchor, frame) { a, w, h ->
@@ -78,8 +78,7 @@ private fun Modifier.nextTo(anchor: Rect, frame: WindowInsets, gap: Dp = 4.dp) =
     Offset(a.center.x - w / 2f, if (above >= 0f) above else a.bottom + g)
 }
 
-/** onClose(false): a press on the field or Back; elsewhere outside — the host's layer (slot.cancel).
-The first digit, "." or "-" replaces the field's initial value; "←" and DEL edit it as usual */
+/** onClose(false): a press on the field or Back. The first digit, "." or "-" replaces the initial value */
 @Composable
 private fun NumPad(text: String, anchor: Rect, onChange: (String) -> Unit, onClose: (apply: Boolean) -> Unit) {
     var fresh by remember { mutableStateOf(true) }
@@ -116,7 +115,7 @@ private fun NumKey(key: String, onClick: () -> Unit) = Button({ Feedback.tap(); 
     }
 }
 
-/** [modifier] sets size, background and border: it precedes clickable/padding, so the NumPad anchor and touch area = the whole chip */
+/** [modifier] (size, background, border) precedes clickable: the anchor and touch area = the whole chip */
 @Composable
 fun NumField(value: String, modifier: Modifier, padding: PaddingValues, suffix: String = "", color: Color = Color.Unspecified, fontSize: TextUnit = TextUnit.Unspecified, lineHeight: TextUnit = TextUnit.Unspecified, onApply: (Float) -> Unit) {
     var typed by remember { mutableStateOf<String?>(null) }
@@ -128,7 +127,7 @@ fun NumField(value: String, modifier: Modifier, padding: PaddingValues, suffix: 
         modifier.trackBounds(bounds).plainClickable { typed = value }.padding(padding),
         color = color, fontSize = fontSize, textAlign = TextAlign.Center, lineHeight = lineHeight, maxLines = 1
     )
-    // Composed by the host; reads typed itself. onDispose also covers the field leaving composition while open (its popover closed by the same press)
+    // Composed by the host; onDispose also covers the field leaving composition while open
     if (typed != null) DisposableEffect(slot) {
         slot.cancel = { typed = null }
         slot.content = {

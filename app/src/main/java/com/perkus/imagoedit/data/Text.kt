@@ -12,10 +12,10 @@ import android.text.TextPaint
 import androidx.core.graphics.createBitmap
 import kotlin.math.ceil
 
-const val TEXT_REF = 1000f // кегль раскладки, px; крупный — getTextBounds (целые px) точен до 0,1 %
+const val TEXT_REF = 1000f // кегль раскладки, px: крупный — getTextBounds точен
 
-/** [text] at TEXT_REF px, a line per paragraph, [align]ed within the widest; [spacing] between letters, em. [w]×[h] — its ink's box, without the lines' room; no ink → the lines' box.
-The frame stretches it: the live text and the baked layer match. The paint is mutable → one thread per instance */
+/** [text] at TEXT_REF px, a line per paragraph, [align]ed; [spacing] in em. [w]×[h] — the ink's box (no ink → the lines'). The frame stretches it.
+The paint is mutable → one thread per instance */
 class TextLayout(text: String, typeface: Typeface, align: Layout.Alignment, spacing: Float) {
     private val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
         this.typeface = typeface
@@ -38,7 +38,6 @@ class TextLayout(text: String, typeface: Typeface, align: Layout.Alignment, spac
     val w = ceil(box.width()).toInt()
     val h = ceil(box.height()).toInt()
 
-    /** The box centered in [w]×[h] at (0, 0) */
     fun draw(c: Canvas, color: Int) {
         paint.color = color
         c.save()

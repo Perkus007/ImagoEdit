@@ -74,7 +74,7 @@ import com.perkus.imagoedit.ui.theme.CardShape
 import com.perkus.imagoedit.ui.theme.SmallShape
 import kotlin.math.roundToInt
 
-val DIALOG_W = 360.dp // ширина диалога и встроенных карточек по умолчанию
+val DIALOG_W = 360.dp // по умолчанию
 private val POPOVER_SHAPE = RoundedCornerShape(10.dp)
 
 @Composable
@@ -89,7 +89,7 @@ fun DialogCard(title: String?, modifier: Modifier = Modifier, titleEnd: (@Compos
         }
     }
 
-/** [pos] gets the anchor in local coordinates of the parent (offset by [frame]); the result is clamped to the parent bounds */
+/** [pos] gets the anchor in the parent's coordinates (offset by [frame]); clamped to the parent */
 fun Modifier.anchored(anchor: Rect, frame: WindowInsets, pos: Density.(a: Rect, w: Int, h: Int) -> Offset) = layout { measurable, c ->
     val p = measurable.measure(c)
     val o = pos(anchor.translate(-frame.getLeft(this, layoutDirection).toFloat(), -frame.getTop(this).toFloat()), p.width, p.height)
@@ -98,14 +98,12 @@ fun Modifier.anchored(anchor: Rect, frame: WindowInsets, pos: Density.(a: Rect, 
     }
 }
 
-/** Over the opener button at [anchor] of an overlay card: a press only dismisses; passed through, the button's click would reopen the card.
-A press elsewhere outside the card goes to the host's permanent dismissOnPress layer beneath (EditorScreen, NumPadHost) */
+/** Over the opener at [anchor]: a press only dismisses (passed through, its click would reopen the card); elsewhere outside — the host's dismissOnPress layer */
 @Composable
 fun OpenerGuard(anchor: Rect, onDismiss: () -> Unit) =
     Box(Modifier.anchored(anchor, LocalFrame.current) { a, _, _ -> a.topLeft }.size(with(LocalDensity.current) { anchor.size.toDpSize() }).tapToDismiss(onDismiss))
 
-/** An overlay, not a window: opens instantly, system bars untouched. Emits siblings into the caller's Box, above its permanent dismissOnPress layer.
-[modifier] — the card's size */
+/** An overlay, not a window: opens instantly, system bars untouched; emitted above the caller's dismissOnPress layer. [modifier] — the card's size */
 @Composable
 fun Popover(anchor: Rect, position: Modifier, onDismiss: () -> Unit, modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     OpenerGuard(anchor, onDismiss)
@@ -113,20 +111,19 @@ fun Popover(anchor: Rect, position: Modifier, onDismiss: () -> Unit, modifier: M
     PopoverCard(position.consumeTaps().then(modifier), content)
 }
 
-/** The popover's card alone, for one that places itself: [modifier] places it, takes its taps and sizes it */
+/** The card alone for a self-placing popover: [modifier] places and sizes it */
 @Composable
 fun PopoverCard(modifier: Modifier, content: @Composable ColumnScope.() -> Unit) =
     Surface(modifier, POPOVER_SHAPE, Color.White, Color.Black) { Column(Modifier.padding(8.dp), Arrangement.spacedBy(4.dp), content = content) }
 
-/** Fullscreen dialog: centering and lifting above the keyboard are done by Compose, not the system window, so the camera cutout and IME don't shift content off-center.
-[busy] — indicator above the card, taking its taps: the screen's own one lies beneath this window */
+/** Fullscreen dialog centered and lifted above the keyboard by Compose: the cutout and IME don't shift it. [busy] — indicator over the card */
 @Composable
 fun CenteredDialog(onDismiss: () -> Unit, busy: Boolean = false, content: @Composable () -> Unit) =
     Dialog(onDismiss, DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)) {
         val window = (LocalView.current.parent as? DialogWindowProvider)?.window
         DisposableEffect(window) {
             window?.let {
-                // windowAnimations -1, not 0: zero means "unset" and the theme's style is used
+                // windowAnimations -1, not 0: 0 = unset, the theme's is used
                 it.attributes = it.attributes.apply {
                     layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
                     windowAnimations = -1
@@ -137,21 +134,21 @@ fun CenteredDialog(onDismiss: () -> Unit, busy: Boolean = false, content: @Compo
             onDispose {}
         }
         val frame = LocalFrame.current
-        val ime = WindowInsets.ime // read only in the layout phase below → keyboard height doesn't trigger recomposition
+        val ime = WindowInsets.ime // read in layout only: no recomposition
         Box(
             Modifier.fillMaxSize()
                 .tapToDismiss(onDismiss)
-                // The keyboard is NOT added to padding: the area would shrink and flatten the card's buttons
+                // The keyboard isn't padding: the card's buttons would flatten
                 .windowInsetsPadding(frame),
             contentAlignment = Alignment.Center
         ) {
-            // Own NumPad host: the dialog is a separate window, the screen's host lies beneath it
+            // Own NumPad host: the dialog is a separate window
             NumPadHost {
                 Box(
                     Modifier
                         .layout { measurable, c ->
                             val p = measurable.measure(c)
-                            // Lift as if centered above the keyboard (ime/2), up to the screen's top — the keyboard covers the rest
+                            // Lift as if centered above the keyboard, up to the screen's top
                             val lift = minOf(ime.getBottom(this) / 2, (c.maxHeight - p.height) / 2 - 4.dp.roundToPx()).coerceAtLeast(0)
                             layout(p.width, p.height) { p.place(0, -lift) }
                         }
@@ -162,13 +159,12 @@ fun CenteredDialog(onDismiss: () -> Unit, busy: Boolean = false, content: @Compo
         }
     }
 
-/** [width] = null: wraps content width; fillMaxWidth buttons stretch to the widest element, not the screen edge */
+/** [width] null — wraps content; fillMaxWidth buttons stretch to the widest element */
 @Composable
 fun AppDialog(title: String?, onDismiss: () -> Unit, width: Dp? = DIALOG_W, borderColor: Color? = null, busy: Boolean = false, content: @Composable ColumnScope.() -> Unit) =
     CenteredDialog(onDismiss, busy) { DialogCard(title, if (width != null) Modifier.width(width) else Modifier.width(IntrinsicSize.Max), borderColor = borderColor, content = content) }
 
-/** Screen-wide. Wraps up to 5 lines, then scrolls to the cursor; the card and OK grow from one line's height.
-[newLines] — the keyboard's Enter types a new line and only OK finishes; otherwise Enter finishes */
+/** Up to 5 lines, then scrolls. [newLines] — Enter types a new line, only OK finishes */
 @Composable
 fun TextInputDialog(text: String, onDismiss: () -> Unit, newLines: Boolean = false, onResult: (String) -> Unit) {
     val state = rememberTextFieldState(text, TextRange(0, text.length))
@@ -181,13 +177,13 @@ fun TextInputDialog(text: String, onDismiss: () -> Unit, newLines: Boolean = fal
                 BasicTextField(
                     state, Modifier.weight(1f).focusRequester(focus),
                     textStyle = LocalTextStyle.current.copy(color = LocalContentColor.current),
-                    // Default in a multi-line field: the keyboard shows Enter, not an action key
+                    // Default in a multi-line field: Enter, not an action key
                     keyboardOptions = KeyboardOptions(imeAction = if (newLines) ImeAction.Default else ImeAction.Done),
                     onKeyboardAction = { onResult(state.text.toString()) },
                     lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
                 )
-                // matchParentSize: OK takes the row height without adding Material's minimum button height to it — the text alone sets it
+                // matchParentSize: OK takes the row height without Material's minimum
                 Box(Modifier.width(56.dp).fillMaxHeight()) { DialogButton(stringResource(R.string.ok), BtnGreen, Modifier.matchParentSize()) { onResult(state.text.toString()) } }
             }
         }
@@ -209,7 +205,7 @@ fun OkCancel(onCancel: () -> Unit, okColor: Color = BtnGreen, cancelColor: Color
     DialogButton(stringResource(R.string.ok), okColor, Modifier.weight(1f), okEnabled, onOk)
 }
 
-/** Back and a tap outside don't dismiss: discarding unsaved work takes an explicit answer */
+/** Back and outside taps don't dismiss: discarding work takes an explicit answer */
 @Composable
 fun RecoveryDialog(onAnswer: (restore: Boolean) -> Unit) = AppDialog(stringResource(R.string.recovery_title), onDismiss = {}) {
     Text(stringResource(R.string.recovery_text), fontSize = 14.sp, textAlign = TextAlign.Center)

@@ -36,9 +36,9 @@ import com.perkus.imagoedit.data.asPath
 import com.perkus.imagoedit.ui.common.AppIcons
 import kotlin.math.roundToInt
 
-private const val MAX_WIDTH = 512 // наибольшая ширина обводки, px холста
-private const val DEFAULT_WIDTH = 10 // ширина обводки при первом открытии, px холста
-private val ROW_W = rowWidth(8) // ряд 2 вровень с рядом 1 (8 кнопок): панель не меняет ширину при смене режима
+private const val MAX_WIDTH = 512 // px холста
+private const val DEFAULT_WIDTH = 10 // px холста
+private val ROW_W = rowWidth(8) // вровень с рядом 1: ширина не меняется со сменой режима
 private val BTN = 32.dp // = ToolBtn
 
 /** name is persisted */
@@ -51,7 +51,7 @@ private val StrokeSide.icon
         StrokeSide.Inside -> AppIcons.OutlineInternal
     }
 
-/** Persisted, each change at once. A centered stroke is only even wide: an odd one would half-cover the px either side of a whole-px outline — odd widths go up by 1 */
+/** Persisted at once. A centered stroke is only even wide: an odd one would half-cover px around a whole-px outline */
 @Stable
 class FillOptions(settings: AppSettings) {
     val color = ColorOptions(settings, "fill.color")
@@ -69,35 +69,36 @@ class FillOptions(settings: AppSettings) {
     }
 }
 
-/** The Fill/Stroke tool on layer [l] of the canvas [cw]×[ch] in its [options]' color: Fill — what the selection [sel] selects (null — everything), Stroke — along its outline
-(null — the canvas's). The canvas shows it over the layer live (drawPreview), ✓ paints it in as a brush stroke (stroke). [applying] — ✓ is being baked */
+/** Fill/Stroke on layer [l]: Fill — what [sel] selects (null — the canvas), Stroke — its outline (null — the layer's [pixels]' outline). Previewed live (drawPreview),
+✓ paints it as a brush stroke, the layer grows to hold it (Stroke.room). [applying] — being baked */
 @Stable
-class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val sel: Selection?) {
+class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val sel: Selection?, pixels: Selection? = null) {
     val layer = l.id
     private val file = l.file
     private val canvas = Rect(0, 0, cw, ch).asPath()
     private val filled = Figure(sel?.outline ?: canvas) // the preview's fill, a soft edge aside
-    private val outline = sel?.let { it.drawn ?: it.outline } ?: canvas
-    private val sharp = sel == null || sel.drawn != null // corners as growing keeps them (Selection.grown): a drawn shape's sharp, px-made ones round
+    private val outline = sel?.let { it.drawn ?: it.outline } ?: pixels?.outline
+    // Corners as growing keeps them: a drawn shape's and a one-rect layer's sharp, px-made ones round
+    private val sharp = sel?.let { it.drawn != null } ?: (pixels?.region?.isRect == true)
     private val paint = Paint().apply { isAntiAlias = true }
     var applying by mutableStateOf(false)
 
     private val fill get() = options.mode.value == FillMode.Fill
 
-    /** The stroke along the outline; null — none, 0 px wide */
-    private val stroked by derivedStateOf { options.width.value.takeIf { it > 0 }?.let { Figure(outline, options.side.value, it.toFloat(), sharp) } }
+    /** null — 0 px wide or no outline */
+    private val stroked by derivedStateOf { options.width.value.takeIf { it > 0 }?.let { w -> outline?.let { Figure(it, options.side.value, w.toFloat(), sharp) } } }
 
-    /** What ✓ paints into the layer; null — nothing. A fill covers the canvas, the selection limits it as it limits a brush */
+    /** null — nothing. A fill covers the canvas, the selection limits it */
     fun stroke(): Stroke? = (if (fill) Figure(canvas) else stroked)?.let { Stroke(layer, file, options.color.value.toArgb(), area = sel.takeIf { fill }, figure = it) }
 
-    /** Over its layer [l] (as Layer.paintable) drawn with [alpha], [scale] screen px per canvas px. Options are read in the draw phase: a change redraws without recomposition */
-    fun DrawScope.drawPreview(l: Layer, alpha: Float, scale: Float, cw: Int, ch: Int) {
+    /** Over its layer, within the canvas; options read in the draw phase */
+    fun DrawScope.drawPreview(alpha: Float, scale: Float, cw: Int, ch: Int) {
         val f = sel?.feather?.takeIf { fill }
         val s = if (fill) filled else stroked ?: return
         val c = drawContext.canvas.nativeCanvas
         c.save()
         c.scale(scale, scale)
-        c.clipRect(maxOf(l.x, 0), maxOf(l.y, 0), minOf(l.x + l.w, cw), minOf(l.y + l.h, ch))
+        c.clipRect(0, 0, cw, ch)
         paint.color = options.color.value.toArgb()
         paint.alpha = (alpha * 255).roundToInt()
         if (f != null) f.draw(c, paint) else s.draw(c, paint)
@@ -105,7 +106,7 @@ class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val
     }
 }
 
-/** Row 1: color, the modes, the stroke's sides (off while filling), Cancel, ✓; Stroke unfolds row 2, as wide: its width. Slides in; away while the color panel is open */
+/** Row 1: color, modes, sides (off while filling), Cancel, ✓; Stroke unfolds row 2: width. Away while the color panel is open */
 @Composable
 fun FillOverlay(s: FillTool, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) = Box(Modifier.fillMaxSize()) {
     val away = open == ToolPopup.Color
@@ -115,10 +116,10 @@ fun FillOverlay(s: FillTool, picture: PipetteSource, open: ToolPopup?, onPopup: 
         val o = s.options
         val stroke = o.mode.value == FillMode.Stroke
         BottomPanel(stroke, null, Modifier, buttons = {
-            // The fill is read in the draw phase: follows the color panel live
+            // Read in the draw phase: follows the color panel live
             RoundBtn(null, false, { o.color.value }, Modifier, BTN) { onPopup(colorPopup(o.color, picture, it)) }
             FillMode.entries.forEach { m -> ToggleBtn(m.icon, m == o.mode.value) { o.mode.value = m } }
-            // While filling none shows chosen; the side stays saved for the stroke
+            // While filling none shows chosen; the side stays saved
             StrokeSide.entries.forEach { d -> ToggleBtn(d.icon, stroke && d == o.side.value, enabled = stroke) { o.setSide(d) } }
             ConfirmButtons(onCancel, onConfirm)
         }) {

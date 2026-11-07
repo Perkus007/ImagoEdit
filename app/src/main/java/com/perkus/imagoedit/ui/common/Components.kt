@@ -75,13 +75,13 @@ import com.perkus.imagoedit.ui.theme.SideBarBg
 import kotlin.math.roundToInt
 
 val SIDEBAR_W = 80.dp
-val BAR_H = 40.dp // высота верхней полосы, ряда кнопок и сторона IconBtn; от неё же считаются отступы над панелью и «вписать» холст
-private val FIELD_W = 56.dp // поле числа рядом с ползунком: вмещает «100px»
+val BAR_H = 40.dp // верхняя полоса, ряд кнопок, сторона IconBtn
+private val FIELD_W = 56.dp // вмещает «100px»
 private val FIELD_SHAPE = RoundedCornerShape(4.dp)
-private val GRADIENT_TRACK_H = 16.dp // высота градиентной дорожки ползунка: как у обычной
-private val LABELED_SLIDER_W = 200.dp // ползунок строки с подписью: одной длины во всех строках окна
-private val BUSY_SHADOW_OFFSET = 1.dp // тень текста индикатора занятости: сдвиг вправо-вниз
-private val BUSY_SHADOW_BLUR = 2.dp // размытие тени текста индикатора занятости
+private val GRADIENT_TRACK_H = 16.dp
+private val LABELED_SLIDER_W = 200.dp // одной длины во всех строках окна
+private val BUSY_SHADOW_OFFSET = 1.dp
+private val BUSY_SHADOW_BLUR = 2.dp
 
 @Composable
 fun Bar(modifier: Modifier = Modifier, arrangement: Arrangement.Horizontal = Arrangement.spacedBy(16.dp), content: @Composable RowScope.() -> Unit) = Row(modifier.fillMaxWidth().background(BarBg).height(BAR_H), arrangement, Alignment.CenterVertically, content = content)
@@ -91,7 +91,7 @@ fun AppTitle(modifier: Modifier = Modifier) = Text(stringResource(R.string.app_n
 fun SideBar(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) = Column(modifier.width(SIDEBAR_W).fillMaxHeight().background(SideBarBg), content = content)
 @Composable
 fun IconBtn(icon: ImageVector, enabled: Boolean = true, onClick: () -> Unit) = IconButton(onClick, Modifier.size(BAR_H), enabled = enabled) { Icon(icon, null, Modifier.size(24.dp)) }
-/** Display only: the toggle is the caller's toggleable container */
+/** Display only: the caller's container toggles */
 @Composable
 fun AppSwitch(checked: Boolean) = Switch(
     checked, null, colors = SwitchDefaults.colors(
@@ -100,7 +100,7 @@ fun AppSwitch(checked: Boolean) = Switch(
     )
 )
 
-/** Opener of an overlay anchored at its bounds; white while [active] (the overlay is open) */
+/** White while [active] */
 @Composable
 fun MenuBtn(icon: ImageVector, active: Boolean, onClick: (anchor: Rect) -> Unit) {
     val bounds = rememberBounds()
@@ -125,12 +125,11 @@ fun Modifier.consumeTaps() = pointerInput(Unit) { detectTapGestures { } }
 /** The element shows its state only by its own colors; no extra objects per element */
 fun Modifier.plainClickable(onClick: () -> Unit) = clickable(interactionSource = null, indication = null, onClick = onClick)
 
-/** Downs consumed by the card (consumeTaps) are skipped by awaitFirstDown.
-Keyed by the lambda: with pointerInput(Unit) the coroutine would keep the first [onDismiss] and miss its replacement */
+/** Downs consumed by the card are skipped. Keyed by the lambda: pointerInput(Unit) would keep the first [onDismiss] */
 fun Modifier.tapToDismiss(onDismiss: () -> Unit) = pointerInput(onDismiss) { awaitEachGesture { awaitFirstDown().consume(); onDismiss() } }
 
-/** Press → [onDismiss] without consuming; hit testing continues to the siblings below → the same touch also reaches them (canvas pinch, buttons).
-Keep it composed for the screen's lifetime, never inside the overlay it dismisses: the hit path is one chain, the siblings below follow this node, and removing it mid-gesture cancels their gesture too */
+/** Press → [onDismiss] without consuming: the touch also reaches the siblings below. Keep it composed for the screen's lifetime, never inside the overlay it dismisses:
+removing it mid-gesture cancels their gesture too */
 fun Modifier.dismissOnPress(onDismiss: () -> Unit): Modifier = this then DismissOnPressElement(onDismiss)
 
 private data class DismissOnPressElement(val onDismiss: () -> Unit) : ModifierNodeElement<DismissOnPressNode>() {
@@ -146,7 +145,7 @@ private class DismissOnPressNode(var onDismiss: () -> Unit) : Modifier.Node(), P
     override fun sharePointerInputWithSiblings() = true
 }
 
-/** Not state: read only on click, updates don't trigger recomposition */
+/** Not state: read only on click */
 class Bounds { var rect = Rect.Zero }
 
 @Composable
@@ -167,8 +166,7 @@ fun rememberImagePicker(onPicked: (ContentResolver, Uri) -> Unit): () -> Unit {
     return remember(launcher, title) { { launcher.launch(title) } }
 }
 
-/** [onChange] while dragging, [onFinished] on release; NumPad ✓ → [onApply].
-With a [label] the free width goes to it (text pressed to the field) and the slider is fixed: stacked rows line up whatever the label lengths. Without one the slider takes it */
+/** [onChange] while dragging, [onFinished] on release; NumPad ✓ → [onApply]. With a [label] the slider is fixed-width: rows line up */
 @Composable
 fun SliderRow(value: Int, range: IntRange, suffix: String, label: String? = null, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Float) -> Unit) =
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -177,7 +175,7 @@ fun SliderRow(value: Int, range: IntRange, suffix: String, label: String? = null
         AppSlider(value, onChange, range, (if (label != null) Modifier.width(LABELED_SLIDER_W) else Modifier.weight(1f)).height(32.dp), onFinished = onFinished)
     }
 
-/** [gradient] replaces the plain track. The track spans the thumb center's travel → the color under the thumb matches the value */
+/** [gradient] replaces the track; it spans the thumb center's travel: the color under the thumb matches */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppSlider(value: Int, onChange: (Int) -> Unit, range: IntRange, modifier: Modifier = Modifier, enabled: Boolean = true, onFinished: (() -> Unit)? = null, gradient: Brush? = null) {

@@ -20,33 +20,32 @@ import java.util.zip.Deflater
 import java.util.zip.Inflater
 import kotlin.math.floor
 
-const val TILE = 256 // сторона тайла, px файла слоя: единица заливки в GPU, записи в файл и шага Undo
+const val TILE = 256 // px файла слоя: единица заливки в GPU, записи и шага Undo
 private const val HALF = TILE / 2
-private const val TILE_BYTES = TILE * TILE * 4 // буфер под тайл любого формата: ARGB_8888 — 4 Б на пиксель, ALPHA_8 — 1
+private const val TILE_BYTES = TILE * TILE * 4
 
 /** Tiles along a side of [len] file px at level [n] (2ⁿ× smaller) */
 internal fun tilesAlong(len: Int, n: Int) = (((len + (1 shl n) - 1) shr n) + TILE - 1) / TILE
 
-/** Down to the level that fits one tile */
 private fun levelCount(w: Int, h: Int): Int {
     var n = 0
     while (tilesAlong(w, n) > 1 || tilesAlong(h, n) > 1) n++
     return n + 1
 }
 
-/** Px of a tile from [start] (level px) that lie on the layer: its side [len] file px, at level [n] */
+/** Px of a tile from [start] (level px) on the layer */
 private fun valid(len: Int, n: Int, start: Int) = minOf(TILE, ((len + (1 shl n) - 1) shr n) - start)
 
 private val Bitmap.bpp get() = if (config == Bitmap.Config.ALPHA_8) 1 else 4
 
-/** A tile's bytes ([bpp] per px) past the layer's edge ([vw]×[vh] on it) repeat the edge: filtered sampling at the edge then sees the edge, as the image's clamped texture does */
+/** Past the layer's edge ([vw]×[vh]) the edge px repeat: filtered sampling sees the edge, as a clamped texture */
 private fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
     val row = TILE * bpp
     val pad = (TILE - vw) * bpp
     if (pad > 0) for (y in 0 until vh) {
         val at = y * row + vw * bpp
         System.arraycopy(this, at - bpp, this, at, bpp)
-        var done = bpp // the copied run doubles: a few calls per row
+        var done = bpp
         while (done < pad) {
             val n = minOf(done, pad - done)
             System.arraycopy(this, at, this, at + done, n)
@@ -56,7 +55,6 @@ private fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
     for (y in vh until TILE) System.arraycopy(this, (vh - 1) * row, this, y * row, row)
 }
 
-/** clampPad on a drawn tile; [raw] — TILE_BYTES */
 private fun Bitmap.clampPad(vw: Int, vh: Int, raw: ByteArray) {
     if (vw == TILE && vh == TILE) return
     copyPixelsToBuffer(ByteBuffer.wrap(raw))
@@ -64,9 +62,8 @@ private fun Bitmap.clampPad(vw: Int, vh: Int, raw: ByteArray) {
     copyPixelsFromBuffer(ByteBuffer.wrap(raw))
 }
 
-/** Immutable raster over a layer's [w]×[h] file px of ALPHA_8 or ARGB_8888 tiles: [levels][0] — row by row, each next level 2× smaller; a missing tile — empty.
-A tile never changes once in it: an edit makes new ones and shares the rest → a history step holds only the tiles its edit replaced (bytesBeyond).
-[id] — also its file name: the file is written only when a saved state needs it */
+/** Immutable raster of ALPHA_8 or ARGB_8888 tiles: [levels][0] row by row, each next level 2× smaller; a missing tile — empty.
+Tiles never change: an edit makes new ones and shares the rest, so a history step holds only the replaced ones. [id] — also the file name */
 class Tiles(val id: String, val w: Int, val h: Int, val levels: List<Array<Bitmap?>>) {
     fun cols(n: Int) = tilesAlong(w, n)
 
@@ -74,10 +71,10 @@ class Tiles(val id: String, val w: Int, val h: Int, val levels: List<Array<Bitma
     fun recycle() = levels.forEach { l -> l.forEach { it?.recycle() } }
 }
 
-/** For drawTiles. Paint() anti-aliases since API 31: a pixel on a shared tile edge would be half covered by each tile — a visible grid */
+/** Paint() anti-aliases since API 31: shared tile edges would show a grid */
 fun tilePaint() = Paint().apply { isAntiAlias = false }
 
-/** [unit] px per tile px; [paint] — from tilePaint; [blank] — for a missing tile's rect, null — skipped */
+/** [unit] px per tile px; [blank] — paints a missing tile's rect, null — skipped */
 fun Canvas.drawTiles(tiles: Array<Bitmap?>, cols: Int, unit: Float, paint: Paint, r: RectF, blank: Paint? = null) {
     val side = TILE * unit
     for (k in tiles.indices) {
@@ -85,15 +82,13 @@ fun Canvas.drawTiles(tiles: Array<Bitmap?>, cols: Int, unit: Float, paint: Paint
         if (t == null && blank == null) continue
         val c = k % cols
         val row = k / cols
-        // Edges computed alike for neighbors: no gap or overlap
         r.set(c * side, row * side, (c + 1) * side, (row + 1) * side)
         if (quickReject(r.left, r.top, r.right, r.bottom)) continue
         if (t != null) drawBitmap(t, null, r, paint) else if (blank != null) drawRect(r, blank)
     }
 }
 
-/** The 2×2 tiles of the level below from ([cx], [cy]) averaged byte by byte (premultiplied channels) into one, [vw]×[vh] of it on the layer; none of them → null (empty).
-[sub], [out] — TILE_BYTES each */
+/** 2×2 tiles of the level below averaged byte by byte; none → null. [sub], [out] — TILE_BYTES */
 private fun halve(below: Array<Bitmap?>, cols: Int, rows: Int, cx: Int, cy: Int, vw: Int, vh: Int, sub: ByteArray, out: ByteArray): Bitmap? {
     var like: Bitmap? = null
     out.fill(0)
@@ -119,7 +114,6 @@ private fun halve(below: Array<Bitmap?>, cols: Int, rows: Int, cx: Int, cy: Int,
     return t.blankLike(TILE, TILE).apply { copyPixelsFromBuffer(ByteBuffer.wrap(out)) }
 }
 
-/** Coarser levels redone above the [changed] tiles of level 0 */
 private fun redoLevels(levels: List<Array<Bitmap?>>, w: Int, h: Int, changed: BooleanArray) {
     val sub = ByteArray(TILE_BYTES)
     val out = ByteArray(TILE_BYTES)
@@ -135,8 +129,7 @@ private fun redoLevels(levels: List<Array<Bitmap?>>, w: Int, h: Int, changed: Bo
     }
 }
 
-/** [make] remakes each [touched] level-0 tile from its old one (null — none) at file px ([x], [y]): null — empty there; an immutable one is shared as is (uniform: nothing to pad).
-The rest are shared, the levels above redone. Nothing left → null */
+/** [make] remakes each [touched] level-0 tile from its old one (null — empty); an immutable result is shared as is. Nothing left → null */
 internal fun Tiles?.edited(id: String, w: Int, h: Int, touched: BooleanArray, make: (old: Bitmap?, x: Int, y: Int) -> Bitmap?): Tiles? {
     val levels = this?.levels?.map { it.copyOf() } ?: List(levelCount(w, h)) { n -> arrayOfNulls<Bitmap>(tilesAlong(w, n) * tilesAlong(h, n)) }
     val cols = tilesAlong(w, 0)
@@ -152,7 +145,7 @@ internal fun Tiles?.edited(id: String, w: Int, h: Int, touched: BooleanArray, ma
     return Tiles(id, w, h, levels)
 }
 
-/** Marks the tiles ([cols]×[rows]) the rect (file px, edges inclusive) reaches */
+/** Rect in file px, edges inclusive */
 internal fun BooleanArray.mark(cols: Int, rows: Int, left: Float, top: Float, right: Float, bottom: Float) {
     val c0 = floor(left / TILE).toInt().coerceAtLeast(0)
     val c1 = floor(right / TILE).toInt().coerceAtMost(cols - 1)
@@ -161,12 +154,11 @@ internal fun BooleanArray.mark(cols: Int, rows: Int, left: Float, top: Float, ri
     for (y in r0..r1) for (x in c0..c1) this[y * cols + x] = true
 }
 
-/** Marks the tiles [rects] (Region.rects) reach */
 internal fun BooleanArray.mark(cols: Int, rows: Int, rects: IntArray) {
     for (k in rects.indices step 4) mark(cols, rows, rects[k].toFloat(), rects[k + 1].toFloat(), rects[k + 2] - 1f, rects[k + 3] - 1f)
 }
 
-/** Its rects mapped by [m] (90° turns, flips and whole px shifts only): left, top, right, bottom in turn */
+/** [m]: 90° turns, flips and whole-px shifts only */
 internal fun Region.rects(m: Matrix): IntArray {
     val out = ArrayList<Int>()
     val r = Rect()
@@ -181,9 +173,9 @@ internal fun Region.rects(m: Matrix): IntArray {
     return out.toIntArray()
 }
 
-/** A level-0 tile at file px ([x], [y]) of a [w]×[h] layer: [old] copied, or [blank] when none, with [draw] in file px, clipped to the layer */
+/** [old] copied or [blank], then [draw] in file px, clipped to the layer */
 internal inline fun tileDrawn(old: Bitmap?, blank: () -> Bitmap, x: Int, y: Int, w: Int, h: Int, draw: (Canvas) -> Unit): Bitmap {
-    val t = old?.let { it.copy(it.config!!, true) ?: throw OutOfMemoryError() } ?: blank() // config is null only for formats tiles never have
+    val t = old?.let { it.copy(it.config!!, true) ?: throw OutOfMemoryError() } ?: blank()
     Canvas(t).run {
         translate(-x.toFloat(), -y.toFloat())
         clipRect(0, 0, w, h)
@@ -192,7 +184,6 @@ internal inline fun tileDrawn(old: Bitmap?, blank: () -> Bitmap, x: Int, y: Int,
     return t
 }
 
-/** A raster from its level-0 [tiles] (read or rendered); none → null */
 private fun built(id: String, w: Int, h: Int, tiles: Array<Bitmap?>): Tiles? {
     val all = BooleanArray(tiles.size) { tiles[it] != null }
     if (all.none { it }) return null
@@ -203,14 +194,13 @@ private fun built(id: String, w: Int, h: Int, tiles: Array<Bitmap?>): Tiles? {
 
 private val Tiles.everyTile get() = levels.asSequence().flatMap { it.asSequence() }.filterNotNull()
 
-/** Bytes of these rasters' tiles, every level, that none of [others] has: what they alone keep in RAM (a history snapshot over the state after it).
-An immutable tile is one instance shared by all (cutOut): free */
+/** RAM only these rasters' tiles hold beyond [others]: a history step's weight. Immutable shared tiles (cutOut) are free */
 fun List<Tiles>.bytesBeyond(others: List<Tiles>): Long {
     val kept = others.asSequence().flatMap { it.everyTile }.toHashSet()
     return asSequence().flatMap { it.everyTile }.filter { it.isMutable && it !in kept }.toHashSet().sumOf { it.byteCount.toLong() }
 }
 
-/** A raster of a [w]×[h] layer from this bitmap lying at its file px ([x0], [y0]), the tiles of its kind: only where some pixel isn't transparent (for ALPHA_8 — erases something) */
+/** Tiles of this bitmap lying at file px ([x0], [y0]) of a [w]×[h] layer, only where some px isn't transparent */
 internal fun Bitmap.tiledAt(id: String, w: Int, h: Int, x0: Int, y0: Int): Tiles? {
     val cols = tilesAlong(w, 0)
     val tiles = arrayOfNulls<Bitmap>(cols * tilesAlong(h, 0))
@@ -229,7 +219,6 @@ internal fun Bitmap.tiledAt(id: String, w: Int, h: Int, x0: Int, y0: Int): Tiles
         var any = false
         for (i in 0 until (right - left) * (bottom - top)) if ((px[i] ushr 24) != 0) { any = true; break }
         if (!any) continue
-        // Whole-px offset: an exact copy
         tiles[k] = blankLike(TILE, TILE).also { t ->
             Canvas(t).drawBitmap(this, (x0 - x).toFloat(), (y0 - y).toFloat(), paint)
             t.clampPad(valid(w, 0, x), valid(h, 0, y), raw)
@@ -240,7 +229,7 @@ internal fun Bitmap.tiledAt(id: String, w: Int, h: Int, x0: Int, y0: Int): Tiles
 
 internal fun Bitmap.tiled(id: String) = tiledAt(id, width, height, 0, 0)
 
-/** The file px its level-0 tiles cover (within the layer); none → empty */
+/** File px its level-0 tiles cover; none → empty */
 fun Tiles.bounds(): Rect {
     val cols = cols(0)
     val r = Rect()
@@ -248,7 +237,7 @@ fun Tiles.bounds(): Rect {
     return r
 }
 
-/** Its pixels copied over [px] where it has tiles: a line of [len] file px from [x], [y] along X or Y */
+/** Its px over [px] where it has tiles: [len] file px from [x], [y] along X or Y */
 fun Tiles.over(px: IntArray, x: Int, y: Int, alongX: Boolean, len: Int) {
     val cols = cols(0)
     var i = 0
@@ -263,8 +252,7 @@ fun Tiles.over(px: IntArray, x: Int, y: Int, alongX: Boolean, len: Int) {
     }
 }
 
-/** A tile's compressed bytes: tiles never change, so writing a new raster compresses only its new tiles. Only a mask's (ALPHA_8, small):
-a patch's are about as big as its pixels — RAM over time, they're compressed again on each write */
+/** Compressed mask tiles, cached: tiles never change. Patch tiles aren't cached: too big */
 private val packed = Collections.synchronizedMap(WeakHashMap<Bitmap, ByteArray>())
 
 private val Bitmap.packable get() = config == Bitmap.Config.ALPHA_8
@@ -282,7 +270,7 @@ private fun Bitmap.pack(): ByteArray {
     } finally { d.end() }
 }
 
-/** Level 0's tiles, compressed: the coarser levels are rebuilt on reading */
+/** Level 0 only: coarser levels are rebuilt on reading */
 fun Tiles.write(f: File) = f.deleteOnFailure {
     DataOutputStream(f.outputStream().buffered(IO_BUFFER)).use { out ->
         val tiles = levels[0]
@@ -297,7 +285,6 @@ fun Tiles.write(f: File) = f.deleteOnFailure {
     }
 }
 
-/** The tiles file of a [w]×[h] layer as [id]; [blank] — an empty tile of its kind */
 fun File.readTiles(id: String, w: Int, h: Int, blank: () -> Bitmap): Tiles? {
     val tiles = arrayOfNulls<Bitmap>(tilesAlong(w, 0) * tilesAlong(h, 0))
     val raw = ByteArray(TILE_BYTES)

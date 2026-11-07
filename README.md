@@ -3,13 +3,14 @@
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 [![Android 11+](https://img.shields.io/badge/Android-11%2B-3DDC84.svg)](#requirements)
 
-A layer-based raster image editor for Android, built with Jetpack Compose.
+A layer-based raster image editor for Android.
 It works fully offline: no ads, no analytics, no internet permission.
 
-- Up to 100 MP canvases, 16 000 px per side
-- Layers, selections with soft edges, brushes, clone stamp, healing brush, text
-- Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders
-- Projects live in a plain folder on the device and stay there when the app is uninstalled
+- Up to 100 MP canvases, 16 000 px per side.
+- Layers, selections, drawing, clone stamp, healing brush, eraser, blur brush, text.
+- Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders.
+- Projects live in folder on the device and stay there when the app is uninstalled.
+- Project autosave.
 
 ![Editor with layers and a photo](docs/screenshots/editor.webp)
 
@@ -41,70 +42,67 @@ It works fully offline: no ads, no analytics, no internet permission.
 ## Features
 
 ### Projects
-- Project grid with thumbnails, sorted by last change
-- New project with a set canvas size (aspect-ratio lock), or a project made from an image
-- Opens images from other apps: **Open with** and **Share**
+- Project grid with thumbnails, sorted by last change.
+- New project with a set canvas size (aspect-ratio lock), or a project made from an image.
+- Opens images from other apps: **Open with** and **Share.**
 - Rename (tap the name) and delete several projects at once
-- On exit: **Save**, **Save a copy** or **Exit without saving**
+- On exit: **Save**, **Save a copy** or **Exit without saving.**
 
 ### Layers
-- Add an empty layer, duplicate a layer or make a layer from the selection
-- Show/hide, reorder, opacity 0–100 %, delete
-- Merge with the previous layer, merge visible layers or merge all layers
-- **Add image** puts a photo onto a new layer and opens the Move tool on it
+- Add an empty layer, duplicate a layer or make a layer from the selection.
+- Show/hide, reorder, opacity 0–100 %, delete.
+- Merge with the previous layer, merge visible layers or merge all layers.
+- **Add image** puts a photo onto a new layer and opens the Move tool on it.
 
 ### Selection
-- Styles: **Square** (corner radius, 1:1), **Circle** (1:1), **Lasso**, **Polygon**,
-  **Magic wand** (tolerance 0–255, contiguous or every matching pixel), **Brush**
-- Modes: new, add, subtract
+- Styles: **Square** (corner radius, custom size or 1:1), **Circle** (custom size or 1:1), **Lasso**, **Polygon** (with the footsteps of history), **Magic wand** (tolerance 0–255, contiguous or every matching pixel), **Brush**.
+- Modes: new, add, subtract.
 - Menu: select all, deselect, select a layer's pixels, invert
-- **Transform selection**: expand or shrink the edge (−512…+1000 px), blur it (0–1000 px),
-  smooth the outline (0–1000 px), then move, scale and rotate the selection itself
-- Brushes, the eraser, the stamp and fills paint only inside the selection, soft edge included
-- **Edit** menu: cut, copy, copy from all layers, paste (onto a new layer in the Move tool),
-  clear, extract (keep only the selected part of the layer)
+- **Transform selection**: expand or shrink the edge, blur, smooth the outline, move, scale and rotate the selection itself.
+- Brushes, eraser, stamp, and paint fill within a selected area, including soft edges.
+- **Edit** menu: cut, copy, copy from all layers, paste (into the current or another project), clear, extract.
 
 ### Painting and retouching
-- **Drawing**: size, hardness, flow, opacity
-- **Eraser**: the same settings. It writes a mask, the layer's pixels stay unchanged
-- **Stamp**: clone from a source point that keeps its offset, with a live preview
-- **Healing brush**: clones texture and blends it into the surrounding color and light
-- Brush size is set in screen units: zoom in for finer strokes
-- Color: hue/saturation/brightness sliders, saved colors, eyedropper with a magnifier
+- **Drawing**: size, hardness, flow, opacity.
+- **Eraser**: the same settings. It writes a mask, the layer's pixels stay unchanged.
+- **Stamp**: clone from a source point that keeps its offset, with a live preview.
+- **Healing brush**: clones texture and blends it into the surrounding color and light.
+- **Blur**: two styles — **Area** blurs under the brush, **Finger** smudges pixels along the stroke.
+- Brush size is set in screen units: zoom in for finer strokes.
+- Color: hue/saturation/brightness sliders, saved colors, eyedropper with a magnifier.
 
 ### Move and transform
-- Move, scale and rotate a layer, or only its selected part, with handles
-- Flip horizontally and vertically
-- Exact values: X, Y, width, height, angle and opacity, entered with the built-in number pad
-- Aspect-ratio lock, snapping to canvas edges and to 0/90/180/270°, 1 px nudge arrows
+- Move, scale and rotate a layer, or only its selected part, with handles.
+- Flip horizontally and vertically.
+- Exact values: X, Y, width, height, angle and opacity, entered with the built-in number pad.
+- Aspect ratio locking, snapping to canvas edges, rotation with precise degree adjustment, and accurate 1-pixel movement.
 - Separate Undo/Redo inside the tool (100 steps)
 
 ### Text
 - Multi-line text rendered into a new layer above the active one
-- Fonts: the system default, the bundled Caveat, Handjet, Roboto Slab and Tiny5,
-  your own fonts (`.ttf`, `.otf`, `.ttc`) and a Favorites tab
-- Alignment (follows the paragraph direction, RTL included), size, letter spacing (−50…200 %),
-  weight on variable fonts, color, opacity and rotation
+- Fonts: the system default, the bundled Caveat, Handjet, Roboto Slab and Tiny5, your own fonts (`.ttf`, `.otf`, `.ttc`) and a Favorites tab.
+- Alignment, size, letter spacing,
+  weight on variable fonts, color, opacity and rotation.
 
 ### Fill / Stroke
-- Fill the selection (or the whole layer) with a color
-- Stroke the selection outline, 0–512 px wide, outside, centered or inside it.
-  Square and polygon outlines keep sharp corners
+- Fill the selection (or the whole layer) with a color.
+- Stroke the selection outline, outside, centered or inside it.
+  Square and polygon outlines keep sharp corners.
 
 ### Canvas
-- **Frame**: crop the canvas; with a selection the frame starts at its bounds
-- **Size canvas**: scale all layers to a new size, each axis separately, with an aspect-ratio lock
-- **Rotate canvas**: 90° right or left, 180°, horizontal and vertical flip. All layers and the selection rotate together
-- Pinch to zoom (from 1 %) and pan
+- **Frame**: crop the canvas; with a selection the frame starts at its bounds.
+- **Size canvas**: scale all layers to a new size, each axis separately, with or without aspect ratio locking.
+- **Rotate canvas**: 90° right or left, 180°, horizontal and vertical flip. All layers and the selection rotate together.
+- Pinch to zoom and pan.
 
 ### History and recovery
-- Undo/Redo for every edit, see [Limits](#limits)
-- Recovery autosave: 3 s after the last edit and when the app goes to the background.
+- Undo/Redo for every edit.
+- Autosave: 3 s after the last edit and when the app goes to the background.
   After a crash or a forced stop the app offers to restore the project
 
 ### Export
 Export is started from the project list. Files go to `Pictures/ImagoEdit/`, show up in the gallery
-and never overwrite an older file: a number is added to the name instead.
+and never overwrite an older file.
 
 | Format | Quality  | Compression                    | Chroma at 100 % / below | Transparency |
 |--------|----------|--------------------------------|-------------------------|--------------|
@@ -132,9 +130,6 @@ and never overwrite an older file: a number is added to the name instead.
 | Canvas area                   | up to 100 MP. Above 25 MP it depends on the device |
 | Undo steps                    | 200 light edits (strokes, selection, visibility, order…) and 25 heavy ones (adding an image, paste, scaling or rotating a layer, crop, canvas resize, merge) |
 | Undo memory for strokes and masks | 1/24 of the device RAM, from 100 to 300 MB. Beyond it the oldest steps are dropped |
-| Brush size                    | 1–100 (screen units) |
-| Selection expand / blur / smooth | −512…+1000 / 0–1000 / 0–1000 px |
-| Stroke width                  | 0–512 px |
 | Export quality                | 10–100 % |
 
 Images over the canvas limits can be scaled down proportionally on import: the app asks first.
@@ -166,7 +161,6 @@ The project list is just the contents of `.imagoedit`, there is no index. A proj
 can be backed up, copied to another device or deleted with a file manager.
 
 ## Known limitations
-- **Blur** (Area, Finger) and **Tools → Transition** are in development: they show up in the interface but don't work yet
 - Android 11 can't read AVIF, so AVIF images can't be imported there. Export works, opening the result again doesn't. Android 12+ is fine
 - AVIF files above 4K may not open on some phones
 - Undo history is kept only in memory. It is cleared when the project is closed
@@ -190,7 +184,7 @@ can be backed up, copied to another device or deleted with a file manager.
 
 ## Building from source
 Requirements:
-- Android Studio with Android Gradle Plugin 9.5 support, JDK 17+
+- Android Studio with Android Gradle Plugin 9.5+ support, JDK 17+
 - Android SDK Platform 37, NDK, CMake 3.22.1 (from the SDK Manager)
 - Internet access on the first build: Gradle downloads dependencies, CMake downloads
   libjpeg-turbo 3.2.0 and libwebp 1.6.0 and checks their SHA-256

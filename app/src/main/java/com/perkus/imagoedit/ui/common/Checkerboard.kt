@@ -16,7 +16,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.perkus.imagoedit.ui.theme.CheckerGray
 
-/** One 2×2 tile + shader: a single drawRect per frame instead of thousands (weak GPUs) */
+/** A 2×2 tile shader: one drawRect per frame (weak GPUs) */
 @Composable
 fun rememberCheckerBrush(cell: Dp = 8.dp): Brush {
     val cellPx = with(LocalDensity.current) { cell.roundToPx() }
@@ -35,8 +35,7 @@ fun rememberCheckerBrush(cell: Dp = 8.dp): Brush {
 
 private val checkerPaint = Paint().apply { isAntiAlias = false } // main thread only
 
-/** [brush] (rememberCheckerBrush) under a [w]×[h] canvas at the origin. Not anti-aliased, as the layers (drawPlaced): an edge pixel is either in the canvas or not.
-An anti-aliased one, partly covered, shows past a layer's edge as a thin checker line */
+/** Under a [w]×[h] canvas. Not anti-aliased, as the layers: an AA edge would show past a layer's edge as a thin checker line */
 fun DrawScope.drawChecker(brush: Brush, w: Float, h: Float) {
     brush.applyTo(size, checkerPaint, 1f)
     drawContext.canvas.drawRect(0f, 0f, w, h, checkerPaint)

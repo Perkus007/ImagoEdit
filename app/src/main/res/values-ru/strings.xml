@@ -14,7 +14,7 @@
     <string name="new_project">Новый проект</string>
     <string name="width">Ширина</string>
     <string name="height">Высота</string>
-    <string name="canvas_limit">Не больше %1$d Мп.\nБольше %2$d Мп работает не на всех устройствах.</string>
+    <string name="canvas_limit">Не больше %1$d Мп.\nБольше %2$d Мп поддерживают не все устройства:\nесли ваше не справится, приложение может закрыться.\nРаботает автосохранение:\nпосле перезапуска проект можно будет восстановить.</string>
     <string name="bad_size">Разрешение изображения %1$d×%2$d px. Допустимо от %3$d до %4$d px по каждой стороне.</string>
     <string name="too_large_title">Слишком большое изображение</string>
     <string name="too_large_text">Изображение %1$d×%2$d px (%3$.1f Мп). Редактор работает с изображениями до %4$d Мп и до %5$d px по стороне. Уменьшить до %6$d×%7$d px?</string>
@@ -36,8 +36,8 @@
     <string name="export_path">Путь: %1$s</string>
     <string name="info_title">Информация</string>
     <string name="add_layer">Добавить слой</string>
-    <string name="empty_layer">Пустой слой</string>
-    <string name="duplicate_layer">Дубликат слоя</string>
+    <string name="empty_layer">Добавить пустой слой</string>
+    <string name="duplicate_layer">Дубликат выбранного слоя</string>
     <string name="layer_from_selection">Слой из выделения</string>
     <string name="opacity">Непрозрачность</string>
     <string name="merging_layers">Объединение слоёв</string>

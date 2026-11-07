@@ -63,18 +63,16 @@ import com.perkus.imagoedit.ui.theme.Grey
 import com.perkus.imagoedit.ui.theme.SideBarBg
 import kotlin.math.roundToInt
 
-private val LAYER_H = 64.dp // высота ячейки слоя
-private val THUMB = 48.dp // квадрат, в который вписана миниатюра
-private val STROKE = 2.dp // толщина обводки миниатюры и кнопки видимости
-private val STROKE_RADIUS = 4.dp // скругление обводки; по её средней линии скруглена и сама миниатюра
-private val VIS_BTN_W = 16.dp // ширина кнопки видимости (вместе с обводкой)
-private val VIS_BTN_H = 51.dp // высота кнопки видимости (вместе с обводкой)
-private val VIS_BTN_START = 3.dp // отступ кнопки от левого края панели
-private val THUMB_INSET_START = VIS_BTN_START + VIS_BTN_W // занятая кнопкой полоса слева: миниатюра центрируется в остатке до правого края панели
+private val LAYER_H = 64.dp
+private val THUMB = 48.dp
+private val STROKE = 2.dp // обводка миниатюры и кнопки видимости
+private val STROKE_RADIUS = 4.dp // по средней линии обводки скруглена и миниатюра
+private val VIS_BTN_W = 16.dp // с обводкой
+private val VIS_BTN_H = 51.dp // с обводкой
+private val VIS_BTN_START = 3.dp
+private val THUMB_INSET_START = VIS_BTN_START + VIS_BTN_W // миниатюра центрируется в остатке
 
-/** Index 0 is the bottom layer, so moving the finger up increases the index.
-The list doesn't change during the gesture: the dragged layer follows the finger, neighbors shift by one cell (translationY is read
-in the draw phase → no recomposition). The actual reorder happens once — on release */
+/** Index 0 is the bottom layer. The dragged layer follows the finger, neighbors shift a cell (draw phase); the list reorders once, on release */
 private class LayerDrag(private val cell: Float, private val count: Int) {
     var from by mutableIntStateOf(-1)
         private set
@@ -102,7 +100,6 @@ private class LayerDrag(private val cell: Float, private val count: Int) {
     }
 }
 
-/** [masks] — a layer's erase mask, [patches] — its patch */
 @Composable
 fun LayersPanel(project: Project, bitmaps: List<ImageBitmap?>, masks: (Layer) -> LayerMask?, patches: (Layer) -> Tiles?, levels: State<Levels>, selected: Int, listState: LazyListState, menuOpen: Boolean, onSelect: (Int) -> Unit, onToggleVisible: (Int) -> Unit, onMove: (from: Int, to: Int) -> Unit, onAdd: () -> Unit, onMenu: (anchor: Rect) -> Unit, modifier: Modifier = Modifier) = SideBar(modifier) {
     val checker = rememberCheckerBrush(4.dp)
@@ -130,7 +127,7 @@ private fun LayerItem(i: Int, layer: Layer, bitmap: ImageBitmap?, mask: LayerMas
             .graphicsLayer { translationY = drag.offset(i) }
             .then(if (selected) Modifier.background(Color.White) else Modifier)
             .plainClickable(onClick)
-            // pointerInput goes AFTER clickable: the gesture gets events first and consumes them, so no tap fires after a drag. Long press, not immediate: a normal swipe still scrolls the list
+            // After clickable: the gesture consumes first, no tap after a drag. A long press: a swipe still scrolls
             .pointerInput(drag) {
                 detectDragGesturesAfterLongPress(
                     onDragStart = { haptic.performHapticFeedback(HapticFeedbackType.LongPress); drag.start(i) }, onDrag = { change, delta -> change.consume(); drag.update(delta.y) },
@@ -145,10 +142,10 @@ private fun LayerItem(i: Int, layer: Layer, bitmap: ImageBitmap?, mask: LayerMas
                     drawRoundRect(Grey, cornerRadius = CornerRadius(STROKE_RADIUS.toPx()), style = Stroke(STROKE.toPx())) }
         ) {
             Box(Modifier.fillMaxSize().clip(RoundedCornerShape(STROKE_RADIUS)).drawBehind {
-                // By the long side: the box's rounding (aspectRatio) then moves the canvas's edges by under half a px, under the frame
+                // By the long side: the box's rounding moves the canvas edges under half a px
                 val s = maxOf(size.width, size.height) / maxOf(canvasW, canvasH)
                 drawChecker(checker, canvasW * s, canvasH * s)
-                // Uses a thumbnail-sized copy, not the original: the whole original = tens of MB of texture per frame. A patch is drawn from its own smaller levels
+                // A thumbnail-sized copy: the original would be tens of MB of texture per frame
                 val copies = bitmap?.let { levels.value[it.asAndroidBitmap()] ?: return@drawBehind }
                 drawPlaced(bitmap, layer.fileW, layer.fileH, layer.inPlace, s, canvasW, canvasH, copies, orient = layer.orient, mask = mask, patch = patch)
             })

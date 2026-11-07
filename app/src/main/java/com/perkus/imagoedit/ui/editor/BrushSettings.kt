@@ -21,8 +21,8 @@ import com.perkus.imagoedit.data.AppSettings
 import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.ui.common.AppIcons
 
-private val PREVIEW_H = 100.dp // высота превью кисти: в неё вписан круг максимального размера
-private val previewPaint = android.graphics.Paint().apply { isAntiAlias = false } // превью кисти: на нативном холсте, Compose рисует только со сглаживанием
+private val PREVIEW_H = 100.dp // в неё вписан круг наибольшего размера
+private val previewPaint = android.graphics.Paint().apply { isAntiAlias = false } // Compose рисует только со сглаживанием
 
 /** name is part of the prefs key */
 enum class BrushParam(val label: Int, val range: IntRange, val suffix: String, val default: Int) {
@@ -33,7 +33,7 @@ enum class BrushParam(val label: Int, val range: IntRange, val suffix: String, v
     Intensity(R.string.intensity, 0..100, "%", 50)
 }
 
-/** [params] — the tool's: only they get rows in the popover; the rest stay at their defaults, whatever was stored */
+/** [params] — the tool's: only they get rows; the rest stay at their defaults */
 @Stable
 class BrushOptions(settings: AppSettings, key: String, val params: List<BrushParam>) {
     private val values = BrushParam.entries.map { IntOption(settings, "$key.${it.name}", if (it in params) it.range else it.default..it.default, it.default) }
@@ -42,7 +42,7 @@ class BrushOptions(settings: AppSettings, key: String, val params: List<BrushPar
 
 @Composable
 fun BrushSettings(b: BrushOptions, params: List<BrushParam> = b.params) = Column(Modifier.fillMaxWidth(), Arrangement.spacedBy(4.dp)) {
-    // Read in the draw phase: no recomposition on slider moves
+    // Read in the draw phase: sliders don't recompose
     Box(Modifier.fillMaxWidth().height(PREVIEW_H).drawBehind {
         val r = size.height / 2 * b[BrushParam.Size].value / BrushParam.Size.range.last
         val hard = b[BrushParam.Hardness].value / 100f

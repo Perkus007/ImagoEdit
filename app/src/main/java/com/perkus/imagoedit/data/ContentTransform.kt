@@ -18,8 +18,7 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** Visible part of the source as fractions of its sides (0..1). Transparent margins around it are outside the content frame.
-[empty] — no visible pixels at all: the box is then the whole source */
+/** Visible part of the source as fractions of its sides; [empty] — no visible px, the box is the whole source */
 data class ContentBox(val left: Float = 0f, val top: Float = 0f, val right: Float = 1f, val bottom: Float = 1f, val empty: Boolean = false) {
     val width get() = right - left
     val height get() = bottom - top
@@ -27,15 +26,14 @@ data class ContentBox(val left: Float = 0f, val top: Float = 0f, val right: Floa
     val centerY get() = (top + bottom) / 2
 }
 
-/** Same visible part as fractions of the layer sides AFTER orientation: [this] comes from file pixels, while the tool and frame work with the layer as it lies on the canvas */
+    /** As fractions of the layer AFTER orientation */
 fun ContentBox.oriented(orient: Int): ContentBox {
     val r = RectF(left, top, right, bottom)
     orientMatrix(orient, 1, 1).mapRect(r)
     return ContentBox(r.left, r.top, r.right, r.bottom)
 }
 
-/** Layer content placement on the canvas, all in canvas px: frame center ([cx], [cy]), frame size before rotation ([w]×[h]), clockwise angle (°) and pixel flips inside the frame.
-The frame covers only the source's visible part [box]: transparent margins scale and rotate with it but stay outside the frame */
+/** Layer placement, canvas px: frame center ([cx], [cy]), size before rotation, clockwise angle (°), flips. The frame covers only the visible part [box] */
 data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: Float, val angle: Float = 0f, val flipH: Boolean = false, val flipV: Boolean = false, val box: ContentBox = ContentBox()) {
     companion object {
         fun initial(box: ContentBox, x: Int, y: Int, srcW: Int, srcH: Int) = ContentTransform(x + box.centerX * srcW, y + box.centerY * srcH, box.width * srcW, box.height * srcH, box = box)
@@ -43,12 +41,12 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
 
     val axisAligned: Boolean get() = (angle / 90f).let { q -> abs(q - q.roundToInt()) < 1e-4f }
 
-    /** "File pixels → canvas" matrix. Frame [box] and size [w]×[h] are for the layer AFTER orientation. The Compose preview (drawPlaced) repeats the same chain of steps */
+    /** File px → canvas; [box], [w]×[h] are for the layer AFTER orientation. drawPlaced repeats this chain */
     fun matrix(srcW: Int, srcH: Int, orient: Int): Matrix {
         val ow = orientW(orient, srcW, srcH)
         val oh = orientH(orient, srcW, srcH)
         return orientMatrix(orient, srcW, srcH).apply {
-            // Center of the VISIBLE part (not the whole layer) to the origin: it coincides with the frame center
+            // The visible part's center to the origin: it's the frame center
             postTranslate(-box.centerX * ow, -box.centerY * oh)
             postScale(w / (box.width * ow) * (if (flipH) -1f else 1f), h / (box.height * oh) * (if (flipV) -1f else 1f))
             postRotate(angle)
@@ -56,7 +54,7 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
         }
     }
 
-    /** The frame [r] gets when [src] gets this one (its box the whole source): both rects of the same source px */
+    /** The frame [r] gets when [src] gets this one; both rects of the same source px */
     fun framing(src: Rect, r: Rect): ContentTransform {
         val kx = w / src.width()
         val ky = h / src.height()
@@ -77,8 +75,7 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
         return RectF(cx - hx, cy - hy, cx + hx, cy + hy)
     }
 
-    /** Frame bounds plus a margin for anti-aliasing and bilinear halo (a pixel copy has none), clipped to the canvas; null — content is entirely off-canvas.
-    [srcW]×[srcH] — the source layer's size */
+    /** Frame bounds + a margin for AA and bilinear halo, clipped to the canvas; null — entirely off it */
     fun layerRect(canvasW: Int, canvasH: Int, srcW: Int, srcH: Int): Rect? {
         val zoom = maxOf(w / (box.width * srcW), h / (box.height * srcH))
         val pad = if (isPixelCopy(srcW, srcH)) 0 else ceil(maxOf(zoom / 2, 1f)).toInt()
@@ -87,21 +84,19 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
         return if (r.intersect(0, 0, canvasW, canvasH)) r else null
     }
 
-    /** A pixel copy suffices instead of resampling. Flips don't matter: pixels just swap places */
+    /** A pixel copy suffices, no resampling */
     private fun isPixelCopy(srcW: Int, srcH: Int) = abs(w - box.width * srcW) < 0.01f && abs(h - box.height * srcH) < 0.01f && axisAligned
 
-    /** Layer [src] after this transform with the same file, if it only rearranges pixels and stays fully on the canvas; otherwise null — baking needed.
-    The matrix is rounded to the grid as in baking → result matches it pixel for pixel */
+    /** [src] with the same file if this only rearranges px and stays on the canvas; else null — baking needed. Rounded to the grid as baking is */
     fun placed(src: Layer, canvasW: Int, canvasH: Int): Layer? {
         if (!isPixelCopy(src.w, src.h)) return null
         return src.laid(matrix(src.fileW, src.fileH, src.orient).apply { roundToGrid() }).takeIf { it.x >= 0 && it.y >= 0 && it.x + it.w <= canvasW && it.y + it.h <= canvasH }
     }
 
-    /** Canvas px over [src] as it lies → where its pixels carry them: the matrix rounded as in [placed] and [render] */
+    /** Canvas px → where its pixels carry them, rounded as in [placed] and [render] */
     fun carrier(src: Layer) = src.canvasToFile().apply { postConcat(matrix(src.fileW, src.fileH, src.orient).apply { if (isPixelCopy(src.w, src.h)) roundToGrid() }) }
 
-    /** [area] (canvas px) over [src] as it lies, carried along with its pixels (carrier): whole px.
-    Rect by rect, merged by unionAll: setPath's working buffer stays one rect high */
+    /** [area] carried with its pixels, whole px. Rect by rect, merged by unionAll: setPath's buffer stays one rect high */
     fun carry(area: Region, src: Layer): Region {
         val m = carrier(src)
         val iter = RegionIterator(area)
@@ -118,17 +113,16 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
         }.unionAll()
     }
 
-    /** Into a new bitmap sized as [dst] — the layer rect on the canvas (see [layerRect]). [src] is neither modified nor recycled.
-    [clamp] — the source's edge goes on past it (a mask: an erased edge erases the pixels' anti-aliased rim too, a kept one keeps it) */
+    /** Into a new bitmap sized as [dst]; [src] untouched. [clamp] — the source's edge goes on past it (a mask) */
     fun render(src: Bitmap, dst: Rect, orient: Int, clamp: Boolean = false): Bitmap {
         val copy = isPixelCopy(orientW(orient, src.width, src.height), orientH(orient, src.width, src.height))
-        // Downscaling the visible part by more than 2× along an axis goes in ×½ steps along it: a single bilinear pass over a large image causes moiré
+        // Downscaling > 2× goes in ×½ steps: one bilinear pass causes moiré
         val turned = (orient and 1) == 1
-        val fx = if (turned) h / box.height else w / box.width // the source's width on the canvas, px
+        val fx = if (turned) h / box.height else w / box.width
         val fy = if (turned) w / box.width else h / box.height
         val s = src.halveWhile({ fx < it.width / 2f }, { fy < it.height / 2f })
         val out = src.blankLike(dst.width(), dst.height())
-        // Origin → layer's top-left: an integer offset doesn't spoil the grid rounding below
+        // An integer offset keeps the grid rounding below
         val m = matrix(s.width, s.height, orient).apply { postTranslate(-dst.left.toFloat(), -dst.top.toFloat()) }
         if (copy) m.roundToGrid()
         val paint = if (copy) Paint() else Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
@@ -139,8 +133,7 @@ data class ContentTransform(val cx: Float, val cy: Float, val w: Float, val h: F
     }
 }
 
-/** After a 90° rotation the matrix holds "almost" 0/±1 (float error), but exact values are needed:
-then a source pixel maps exactly onto a canvas pixel, and a fractional offset (manual X/Y input) is rounded to an integer */
+/** After 90° turns the matrix holds almost 0/±1: snapped to exact values, the offset rounded */
 private fun Matrix.roundToGrid() {
     val v = FloatArray(9)
     getValues(v)
@@ -148,14 +141,13 @@ private fun Matrix.roundToGrid() {
     setValues(v)
 }
 
-/** [this] with the same file, mask and patch, its file px laid on the canvas by [m] (file px → canvas px, coefficients 0/±1, integer offsets): only its place and orientation new */
+/** Same file, mask and patch laid on the canvas by [m] (0/±1, integer offsets): only place and orientation new */
 fun Layer.laid(m: Matrix): Layer {
     val r = RectF(0f, 0f, fileW.toFloat(), fileH.toFloat()).apply { m.mapRect(this) }
     return copy(x = r.left.roundToInt(), y = r.top.roundToInt(), w = r.width().roundToInt(), h = r.height().roundToInt(), orient = m.toOrient())
 }
 
-/** Orientation (0..7) from the linear part of the "file → canvas" matrix after roundToGrid (only 0/±1 there). Determinant < 0 — flipped.
-The image of the file's X axis (v[0], v[3]) is the rotation's first column; with the flip applied first, its sign is inverted */
+/** Orientation (0..7) from a roundToGrid matrix: determinant < 0 — flipped; the file X axis' image gives the rotation (sign inverted after a flip) */
 internal fun Matrix.toOrient(): Int {
     val v = FloatArray(9)
     getValues(v)

@@ -21,7 +21,7 @@ enum class Tools3Action(override val icon: ImageVector, override val title: Int)
     FillStroke(AppIcons.PaintBucket, R.string.fill_stroke), Text(AppIcons.Text, R.string.text), Transition(AppIcons.Opacity, R.string.transition)
 }
 
-/** Top bar menu of one-shot actions, inactive unless [enabled]. The open menu keeps the lambdas it was opened with → they must read state, not values of the opener's composition */
+/** One-shot actions; inactive unless [enabled]. The open menu keeps its lambdas: they must read state, not the opener's values */
 @Composable
 fun <A : ToolStyle> ActionMenuBtn(kind: ToolPopup, icon: ImageVector, actions: List<A>, open: ToolPopup?, enabled: (A) -> Boolean = { false }, onAction: (A) -> Unit = {}, onOpen: (OpenPopup) -> Unit) =
     MenuBtn(icon, open == kind) { onOpen(OpenPopup(kind, it) { actions.forEach { a -> MenuItem(a, enabled = enabled(a), indication = null) { onAction(a) } } }) }

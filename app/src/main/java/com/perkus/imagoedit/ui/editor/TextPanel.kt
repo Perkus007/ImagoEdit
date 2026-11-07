@@ -82,10 +82,10 @@ import kotlin.math.roundToInt
 
 private const val ROWS = 2 // пока третий свёрнут
 private val FIELD_H = 32.dp // = ToolBtn
-private val ROW_W = rowWidth(11) // ряд 1 вровень с рядом 2: 11 кнопок
-private val PANEL_W = ROW_W + 16.dp // = BottomPanel: ряд и поля по 8dp
-private val SPACING_LABEL = AnnotatedString("A → B") // подпись интервала между буквами, без перевода
-private val WEIGHT_LABEL = buildAnnotatedString { // подпись жирности, без перевода: A самая тонкая, самая толстая
+private val ROW_W = rowWidth(11) // вровень с рядом 2: 11 кнопок
+private val PANEL_W = ROW_W + 16.dp // = BottomPanel
+private val SPACING_LABEL = AnnotatedString("A → B") // без перевода
+private val WEIGHT_LABEL = buildAnnotatedString { // без перевода
     for (w in listOf(FontWeight.Thin, FontWeight.Black)) withStyle(SpanStyle(fontWeight = w)) { append('A') }
 }
 private val FIELDS_GAP = 16.dp
@@ -98,15 +98,15 @@ private val TAB_SP = 14.sp
 private val NAME_SP = 16.sp
 private val INFO_ICON = 20.dp
 private val HINT_W = 280.dp
-private val HINT_GAP = 16.dp // от низа иконки ⓘ: ниже кнопки вкладки
+private val HINT_GAP = 16.dp // от низа иконки ⓘ
 private val PICKER_SHAPE = RoundedCornerShape(10.dp)
-private val FONT_ROW_H = 40.dp // все строки одной высоты: на этом стоит полоса прокрутки
+private val FONT_ROW_H = 40.dp // одной высоты: на этом стоит полоса прокрутки
 private val THUMB_W = 4.dp
 private val THUMB_MIN = 24.dp
 
 private fun TextState.panelH() = BAR_H * (if (expanded) ROWS + 1 else ROWS)
 
-/** [onPopup] null closes the popover. The panel slides away while TextInputDialog, the color panel or the font list is open */
+/** [onPopup] null closes the popover. Slides away while the text dialog, color panel or font list is open */
 @Composable
 fun TextOverlay(s: TextState, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) = Box(Modifier.fillMaxSize()) {
     var typing by remember { mutableStateOf(false) }
@@ -123,7 +123,7 @@ fun TextOverlay(s: TextState, picture: PipetteSource, open: ToolPopup?, onPopup:
 @Composable
 private fun TextPanel(s: TextState, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit, onType: () -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) =
     BottomPanel(s.expanded, { s.expanded = !s.expanded }, Modifier, buttons = {
-        // The buttons 16dp apart as row 2's: each stands over one of them
+        // 16dp apart as row 2's: each over one of them
         Row(Modifier.width(ROW_W), Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
             Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
                 RoundBtn(null, false, { s.color }, Modifier, FIELD_H) { onPopup(colorPopup(s.options.color, picture, it)) }
@@ -174,7 +174,7 @@ private fun TypeBtn(s: TextState, open: Boolean, onPopup: (OpenPopup?) -> Unit) 
     }
 }
 
-/** Letter spacing, then a variable font's weight. As wide as the panel */
+/** Letter spacing, then a variable font's weight */
 @Composable
 private fun TypePopover(s: TextState) =
     PopoverCard(Modifier.fillMaxSize().padding(bottom = s.panelH() + GAP).wrapContentSize(Alignment.BottomCenter).consumeTaps().width(PANEL_W)) {
@@ -184,7 +184,7 @@ private fun TypePopover(s: TextState) =
         }
     }
 
-/** An equal share of the row: the label hugs its text, the slider takes the rest */
+/** An equal share of the row: the label hugs its text */
 @Composable
 private fun RowScope.TypeSlider(label: AnnotatedString, value: Int, range: IntRange, suffix: String, onFinished: () -> Unit, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
     Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
@@ -192,12 +192,12 @@ private fun RowScope.TypeSlider(label: AnnotatedString, value: Int, range: IntRa
         SliderRow(value, range, suffix, onFinished = onFinished, onChange = onChange) { onApply(it.roundToInt()) }
     }
 
-/** The whole screen's height: the panel is away meanwhile. Slides as the panel by [shown] (ToolPopover) */
+/** The whole screen's height; slides by [shown] */
 @Composable
 private fun FontPicker(s: TextState, shown: MutableTransitionState<Boolean>, onDismiss: () -> Unit) {
     val o = s.options
     val tab = o.tab.value
-    var info by remember { mutableStateOf<Rect?>(null) } // Info's window bounds while its hint is shown
+    var info by remember { mutableStateOf<Rect?>(null) } // Info's bounds while its hint shows
     val onInfo = { r: Rect -> info = if (info == null) r else null }
     val list = when (tab) {
         FontTab.System -> s.fonts.system
@@ -217,7 +217,7 @@ private fun FontPicker(s: TextState, shown: MutableTransitionState<Boolean>, onD
             }
         }
     }
-    // A sibling in the screen's Box, as popovers: the card would clip it. Not anchored to the sliding card → goes at once on closing
+    // A sibling in the screen's Box: the card would clip it
     info?.takeIf { shown.targetState }?.let { a ->
         Text(
             stringResource(R.string.fonts_user_hint),
@@ -228,7 +228,6 @@ private fun FontPicker(s: TextState, shown: MutableTransitionState<Boolean>, onD
     }
 }
 
-/** softWrap off: a word never breaks */
 @Composable
 private fun FontTabBtn(t: FontTab, on: Boolean, modifier: Modifier, onInfo: ((Rect) -> Unit)?, onClick: () -> Unit) = Row(
     modifier.fillMaxHeight().clip(SmallShape).background(if (on) TranslucentGray else Color.Transparent).border(1.dp, Grey, SmallShape).plainClickable(onClick).padding(TAB_PAD),
@@ -253,7 +252,7 @@ private fun FontItem(f: AppFont, chosen: Boolean, tab: FontTab, o: TextOptions, 
 
 private fun AppFont.family() = FontFamily(Typeface(typeface))
 
-/** A lazy list can't report its width: measured here with the Texts' style and the layout's paddings. All fonts: no jump on another tab */
+/** A lazy list can't report its width: measured with the Texts' style. All fonts: no jump on another tab */
 @Composable
 private fun rememberPickerWidth(fonts: Fonts): Dp {
     val measurer = rememberTextMeasurer()
@@ -271,7 +270,7 @@ private fun rememberPickerWidth(fonts: Fonts): Dp {
     }
 }
 
-/** Rows of one height. Read in the draw phase: scrolling doesn't recompose */
+/** Read in the draw phase: scrolling doesn't recompose */
 private fun Modifier.scrollbar(s: LazyListState) = drawWithContent {
     drawContent()
     val info = s.layoutInfo

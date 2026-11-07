@@ -57,6 +57,7 @@ import com.perkus.imagoedit.data.newLayerId
 import com.perkus.imagoedit.data.paintable
 import com.perkus.imagoedit.data.persisted
 import com.perkus.imagoedit.data.region
+import com.perkus.imagoedit.data.room
 import com.perkus.imagoedit.data.selected
 import com.perkus.imagoedit.data.toSelection
 import com.perkus.imagoedit.data.transformed
@@ -73,12 +74,12 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.concurrent.Executors
 
-private const val THUMB_CACHE_SIZE = 48 // сколько миниатюр держим в памяти (каждая ≤ 384×384×4 Б)
-private const val PARKED_BYTES = SAFE_PIXELS * 4 // запас пикселей для Undo/Redo: один bitmap на SAFE_PIXELS (4 Б на пиксель). Крупнее LruCache сразу вытолкнет — его Undo/Redo читает с диска. Единственная «ручка» обмена RAM на скорость отката
-private const val AUTOSAVE_DELAY_MS = 3000L // запись восстановления — через столько мс после последней правки: серия штрихов пишется одним разом, а не после каждого
+private const val THUMB_CACHE_SIZE = 48 // каждая ≤ 384×384×4 Б
+private const val PARKED_BYTES = SAFE_PIXELS * 4 // пиксели для Undo/Redo: один bitmap SAFE_PIXELS; что не влезло — с диска
+private const val AUTOSAVE_DELAY_MS = 3000L // запись восстановления после паузы в правках
 private const val TAG = "AppViewModel"
 
-private var stagingSwept = false // File-level, not in ViewModel: a ViewModel may be recreated without process death while the old one's queue is still saving — a sweep would take its files
+private var stagingSwept = false // file-level: a recreated ViewModel's predecessor may still be saving — a sweep would take its files
 private fun <T> List<T>.moved(from: Int, to: Int) = toMutableList().apply { add(to, removeAt(from)) }
 private fun <T> List<T>.putAt(i: Int, item: T) = toMutableList().apply { set(i, item) }
 private fun <T> List<T>.inserted(i: Int, item: T) = toMutableList().apply { add(i, item) }
@@ -87,8 +88,8 @@ private fun <T> List<T>.merged(idx: List<Int>, item: T) = filterIndexed { i, _ -
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val store = ProjectStore()
-    private val writer = Executors.newSingleThreadExecutor() // Single thread: writes run strictly in order and aren't cancelled with the ViewModel (viewModelScope lost the last write on exit)
-    private val io = writer.asCoroutineDispatcher() // Reads (list, layers, thumbnails) share the writer thread: they never overtake an unfinished save
+    private val writer = Executors.newSingleThreadExecutor() // single thread: writes in order, not cancelled with the ViewModel
+    private val io = writer.asCoroutineDispatcher() // reads share it: never overtake an unfinished save
 
     override fun onCleared() {
         keepClip(null) // the next ViewModel of this process won't sweep staging
@@ -103,42 +104,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var editing by mutableStateOf<Project?>(null)
         private set
 
-    // Open project's layer pixels, bottom to top: layers[i] ↔ editing.layers[i]; null — a layer without a file. Exactly what the layer's file decodes to (see Layer)
+    // Layer pixels, bottom to top: layers[i] ↔ editing.layers[i]; null — no file
     var layers by mutableStateOf<List<ImageBitmap?>>(emptyList())
         private set
 
-    /** Masks and patches by id that a state references: current, history, a pending cut's rest. Never evicted: history has no other copy of them (see release) */
+    /** Masks and patches any state references (current, history, a pending cut). Never evicted: history has no other copy */
     private val tiles = HashMap<String, Tiles>()
 
     var pending by mutableStateOf<PendingImage?>(null)
         private set
 
-    /** Last Cut/Copy: the layer a paste starts from and its display pixels. Its file is a staging copy no layer references: edits, saves and closes don't touch it → Paste works in any project */
+    /** Last Cut/Copy: its file is a staging copy no layer references → Paste works in any project */
     private var clip by mutableStateOf<Pair<Layer, Bitmap>?>(null)
 
-    /** Unsaved state of the session the previous process left open: the recovery dialog is shown until it's answered (resolveRecovery) */
+    /** The previous process's unsaved session: the recovery dialog stays until answered */
     var recovered by mutableStateOf<Project?>(null)
         private set
 
-    @Volatile private var unsaved: Pair<Project, List<Tiles>>? = null // latest state for the recovery file with its masks and patches, see autosave
-    private var autosaving: Job? = null // the recovery write waiting for the edits to pause
-    private val doomed = HashSet<String>() // staging files no state needs: discarded after the next recovery write (see release)
+    @Volatile private var unsaved: Pair<Project, List<Tiles>>? = null // for the recovery file, see autosave
+    private var autosaving: Job? = null
+    private val doomed = HashSet<String>() // discarded after the next recovery write (see release)
 
-    private var reimport = {} // the last import again, reduced to the canvas limits: the user's yes to TooLarge
+    private var reimport = {} // the user's yes to TooLarge
 
     var busy by mutableStateOf(false)
         private set
-    var error by mutableStateOf<Throwable?>(null) // also written from the write queue (fine for Compose)
+    var error by mutableStateOf<Throwable?>(null) // also written from the write queue
         private set
 
-    /** Released strokes with their onDone, the baking one first: each bakes over its layer as it is when its turn comes */
+    /** Released strokes with their onDone, the baking one first */
     private val strokes = ArrayDeque<Pair<Stroke, () -> Unit>>()
 
-    /** Strokes not yet in history: meanwhile no other off-main-thread work starts (as while busy), Undo/Redo and closing wait (whenBaked) */
+    /** Strokes not yet in history: no other off-main work starts; Undo/Redo and closing wait (whenBaked) */
     val baking get() = strokes.size
     private val afterBake = ArrayList<() -> Unit>()
 
-    /** Whole data classes are compared → reverting everything = no changes. Session-only state (selection, active layer) isn't saved → doesn't count */
+    /** Whole data classes compared: reverting everything = no changes; session-only state doesn't count */
     val dirty get() = editing?.persisted?.let { e -> projects.none { it == e } } ?: false
 
     val saved get() = editing?.let { e -> projects.any { it.id == e.id } } ?: false
@@ -147,14 +148,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val canUndo get() = history.canUndo
     val canRedo get() = history.canRedo
 
-    /** Pixels of layers absent from the current state but needed by adjacent history steps. Key — Layer.file (immutable, unique).
-    Byte-limited: whatever doesn't fit is read from disk on Undo/Redo. Originals aren't recycled — GC frees them */
+    /** Pixels of layers absent now but needed by nearby history steps, by Layer.file; byte-limited, the rest is read from disk. Not recycled */
     private val parked = object : LruCache<String, Bitmap>(PARKED_BYTES) { override fun sizeOf(key: String, value: Bitmap) = value.allocationByteCount }
 
     private val thumbs = LruCache<Pair<Long, Long>, ImageBitmap>(THUMB_CACHE_SIZE)
     private val Project.thumbKey get() = id to updated
 
-    /** Sole entry into the write queue: an uncaught exception on the background thread would kill the process. A failure is shown: the user must know the work isn't on disk */
+    /** Sole entry into the write queue: an uncaught exception there would kill the process. Failures are shown */
     private fun write(op: ProjectStore.() -> Unit) = writer.execute { runCatching { store.op() }.onFailure { error = it; Log.e(TAG, "write failed", it) } }
 
     private fun commit(list: List<Project>, op: ProjectStore.() -> Unit) {
@@ -166,7 +166,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .first { n -> projects.none { it.name == n } }
 
     private fun <T> runBusy(dispatcher: CoroutineDispatcher, tag: String, work: () -> T, onOk: (T) -> Unit) {
-        if (busy || baking > 0) return // one at a time: one result would overwrite the other
+        if (busy || baking > 0) return // one at a time
         busy = true
         viewModelScope.launch {
             withContext(dispatcher) { runCatching(work) }
@@ -176,7 +176,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Runs [action] once the queued strokes are in history: Undo must take the last one, a save must include it */
+    /** Once the queued strokes are in history: Undo must take the last one, a save must include it */
     private fun whenBaked(action: () -> Unit) {
         if (baking == 0) action() else afterBake += action
     }
@@ -187,8 +187,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun tilesOf(p: Project) = p.layers.flatMap { listOfNotNull(mask(it), patch(it)) }.distinct()
 
-    /** The first call with access in a process also sweeps orphaned staging (the editor is surely closed in a new process), sparing the unsaved session that process left.
-    The user's fonts folder is made with access, for the user to find */
+    /** The first call with access in a process also sweeps orphaned staging, sparing the previous session's unsaved state; creates the user's fonts folder */
     fun refreshAccess() {
         hasAccess = store.hasAccess()
         if (!hasAccess) return
@@ -210,7 +209,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun rename(id: Long, name: String) {
         val old = projects.firstOrNull { it.id == id } ?: return
-        val p = old.copy(name = name.trim().ifEmpty { old.name }) // updated untouched: list order is preserved
+        val p = old.copy(name = name.trim().ifEmpty { old.name }) // updated untouched: list order kept
         commit(projects.map { if (it.id == id) p else it }) { save(p) }
     }
 
@@ -228,7 +227,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissError() { error = null }
 
-    /** The user's answer to TooLarge (shown as the error): [reduce] → the same import again, reduced */
+    /** The user's answer to TooLarge: [reduce] → the same import, reduced */
     fun resolveTooLarge(reduce: Boolean) {
         error = null
         if (reduce) reimport()
@@ -239,13 +238,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         show(p, bitmaps.map { it?.asImageBitmap() })
     }
 
-    /** A new project enters the list only after "Exit and save" */
+    /** Enters the list only after "Exit and save" */
     fun create(width: Int, height: Int, img: Pair<Layer, Bitmap>? = null) {
         val p = Project(System.currentTimeMillis(), uniqueName(LocalDateTime.now().format(DateTimeFormatter.ofPattern("ddMMyyyyHHmmss"))), width, height, layers = listOf(img?.first ?: Layer()))
         show(p, listOf(img?.second?.asImageBitmap()))
     }
 
-    /** A project opened before the dialog appeared (from outside or tapped during the check) is closed as in openExternal */
+    /** A project opened before the dialog appeared is closed as in openExternal */
     fun resolveRecovery(restore: Boolean) = whenBaked {
         val r = recovered ?: return@whenBaked
         recovered = null
@@ -260,8 +259,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Runs on the write queue (io), not Dispatchers.IO: the import staging file can't collide with a staging sweep or save queued earlier.
-    Over the canvas limits it fails with TooLarge: the user's yes runs it again with [reduce] */
+    /** On the write queue (io): its staging file can't collide with an earlier sweep or save. Over the limits → TooLarge */
     private fun <T> runImport(resolver: ContentResolver, uri: Uri, map: (Pair<Layer, Bitmap>) -> T, reduce: Boolean = false, onOk: (T) -> Unit) {
         reimport = { runImport(resolver, uri, map, reduce = true, onOk) }
         runBusy(io, "import", { map(store.importImage(resolver, uri, reduce)) }, onOk)
@@ -269,7 +267,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun importImage(resolver: ContentResolver, uri: Uri) = runImport(resolver, uri, { it }) { create(it.first.w, it.first.h, it) }
 
-    /** refreshAccess() goes after closing (the list read queues behind the save) and before import: the process's first staging sweep must be queued earlier, otherwise onResume would delete the new project's staging file */
+    /** refreshAccess() after closing and before import: the first staging sweep must be queued earlier, or onResume would delete the new project's file */
     fun openExternal(resolver: ContentResolver, uri: Uri) = whenBaked {
         if (busy) return@whenBaked
         if (editing != null) closeEditor(save = dirty)
@@ -279,12 +277,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun closeEditor(save: Boolean, asCopy: Boolean = false) = whenBaked {
         cancelPending()
-        autosaving?.cancel() // the recovery is dropped below
+        autosaving?.cancel()
         autosaving = null
         val imgs = layers
         editing?.let { old ->
-            // Staging files of history snapshots, the current state and those released before are no longer needed: save() has already moved the project's ones by then (same task).
-            // The recovery is dropped before them and only after a successful save: a failed one leaves the session restorable
+            // History and released staging files go after save() moved the project's own; the recovery goes first and only after a successful save
             val session = (history.clear() + old).flatMapTo(HashSet()) { it.layers.files() }.apply { addAll(doomed) }
             doomed.clear()
             if (save) {
@@ -303,22 +300,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun addImage(resolver: ContentResolver, uri: Uri) {
         val p = editing ?: return
         runImport(resolver, uri, { (l, bmp) ->
-            // Integer offset: photo pixels land exactly on canvas pixels, not between them
+            // Integer offset: pixels land exactly on canvas px
             PendingImage(l.copy(x = (p.width - l.w) / 2, y = (p.height - l.h) / 2), bmp, p.layers.size)
         }) { pending = it }
     }
 
-    /** A cut's rest mask goes too; its source layer is untouched */
+    /** A cut's rest mask goes too; its source is untouched */
     fun cancelPending() {
         val pend = pending ?: return
         pending = null
         release(listOfNotNull(pend.layer.file))
     }
 
-    /** If [t] only rearranges pixels and the layer stays on the canvas (see ContentTransform.placed), the file, mask and patch are kept: no baking, light checkpoint.
-    Otherwise they're baked (see ProjectStore.bakeLayer).
-    While an image is [pending], the tool is for it: it becomes a new layer at [i]; a cut one also leaves its source the rest (see moveSelection).
-    The selection moves along with the pixels it holds: a cut's or a whole layer's (moveSelection's onWhole); a soft one becomes hard over all it reached */
+    /** [t] only rearranging pixels on the canvas (ContentTransform.placed) keeps file, mask, patch: a light step; else baked (ProjectStore.bakeLayer).
+    With an image [pending] it becomes a new layer at [i] (a cut leaves its source the rest). The selection moves with the pixels; a soft one becomes hard over its reach */
     fun applyTransform(i: Int, t: ContentTransform, opacity: Int, onDone: () -> Unit) {
         val p = editing ?: return
         val pend = pending
@@ -332,10 +327,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         val mask = mask(cur)
         val patch = patch(cur)
-        // A selection is carried off the main thread too: a complex one takes a while
+        // Off the main thread: a complex selection takes a while
         runBusy(Dispatchers.IO, "transform", {
             val r = moved?.let { Triple(it, src, emptyList<Tiles>()) } ?: store.bakeLayer(p, cur, src, mask, patch, t)
-            // Baking leaves soft edges just past the carried outline: the selection takes them too → it holds the whole image, a next Move takes the layer itself
+            // Baking leaves soft edges just past the carried outline: the selection takes them, so a next Move takes the whole layer
             r to area?.let { t.carry(it, cur) }?.apply {
                 if (moved == null) op(store.visibleRegion(r.first, r.second, r.third.firstOrNull { it.id == r.first.mask }, r.third.firstOrNull { it.id == r.first.patch }), Region.Op.UNION)
             }?.toSelection()
@@ -348,8 +343,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** A new layer at [i], the active one: the text from [layout] (built on the worker: a TextLayout is one thread's) in [color] rendered by the frame [t] (see TextLayout.render),
-    [opacity] its own. All off the canvas → none. [onDone] — once it's in or found unneeded */
+    /** A new active layer at [i]: [layout] (built on the worker: one thread's) in [color] rendered by [t]. All off the canvas → none. [onDone] — once in or unneeded */
     fun addText(i: Int, layout: () -> TextLayout, color: Int, t: ContentTransform, opacity: Int, onDone: () -> Unit) {
         val p = editing ?: return
         runBusy(Dispatchers.IO, "text", { layout().render(t, color, p.width, p.height)?.let { (bmp, r) -> store.writeLayer(bmp, r) } }) { r ->
@@ -358,8 +352,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The canvas becomes [w]×[h], a step: a layer [kept] gives (null — none) keeps its file, any other is baked with its mask and patch by [t] — its place on the new canvas
-    (see ProjectStore.bakeLayer: one off the canvas is left without an image). The selection goes by [sel]. Old files stay referenced by the history snapshot (Undo restores them), so no release is needed */
+    /** The canvas becomes [w]×[h], a step: the layer [kept] gives keeps its file, others are baked by [t] (ProjectStore.bakeLayer). The selection goes by [sel].
+    Old files stay referenced by history: no release */
     private fun reframe(w: Int, h: Int, tag: String, kept: (Layer) -> Layer?, t: (Layer) -> ContentTransform, sel: (Selection) -> Selection?, onDone: () -> Unit) {
         val p = editing ?: return
         val q = p.copy(width = w, height = h)
@@ -378,15 +372,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The canvas becomes [r] (canvas px, within it), every layer with it: one within it only moves (see ContentTransform.placed), one it cuts is baked into its part,
-    one outside it is left without an image; one without a file is only shifted (its patch still covers the smaller canvas). The selection moves along, clipped to the new canvas */
+    /** The canvas becomes [r]: a layer within it only moves, one it cuts is baked into its part, one outside loses its image, one without a file is only shifted.
+    The selection moves along, clipped */
     fun cropCanvas(r: Rect, onDone: () -> Unit) {
         fun Layer.shifted() = copy(x = x - r.left, y = y - r.top)
         reframe(r.width(), r.height(), "crop", { l -> l.shifted().let { s -> if (l.file == null) s else s.inPlace.placed(l, r.width(), r.height()) } }, { it.shifted().inPlace },
             { it.moved(-r.left, -r.top, Rect(0, 0, r.width(), r.height())) }, onDone)
     }
 
-    /** The canvas becomes [w]×[h], every layer with an image scaled along, each axis by its own factor; the selection is dropped. The same size — no step */
+    /** Every layer scaled with the canvas, each axis by its factor; the selection dropped. Same size — no step */
     fun resizeCanvas(w: Int, h: Int, onDone: () -> Unit) {
         val p = editing ?: return
         if (w == p.width && h == p.height) return onDone()
@@ -395,8 +389,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         reframe(w, h, "resize", { l -> l.takeUnless { it.hasImage } }, { l -> ContentTransform((l.x + l.w / 2f) * kx, (l.y + l.h / 2f) * ky, l.w * kx, l.h * ky) }, { null }, onDone)
     }
 
-    /** The canvas turned by [angle]° clockwise (a multiple of 90) after a horizontal flip if [flip] (as Layer.orient), every layer and the selection with it, a step.
-    No baking: a layer keeps its file, mask and patch and only lies anew (Layer.laid), a patch's part past the canvas too. The selection is carried exactly, off the main thread */
+    /** Turned by [angle]° clockwise after a horizontal [flip] (as Layer.orient), all layers and the selection, a step. No baking: layers only lie anew (Layer.laid) */
     fun turnCanvas(angle: Int, flip: Boolean, onDone: () -> Unit) {
         val p = editing ?: return
         val side = angle % 180 != 0
@@ -411,7 +404,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The layer tools act on: a light checkpoint if it changes */
+    /** A light step if it changes */
     fun setActive(i: Int) {
         val p = editing ?: return
         if (i != p.active && i in p.layers.indices) edit(p.copy(active = i), layers)
@@ -421,14 +414,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setOpacity(i: Int, percent: Int) = editLayer(i) { it.copy(opacity = percent.coerceIn(0, MAX_OPACITY)) }
 
-    /** A project always has at least one layer → the only one is cleared instead. The active one at or above [i] goes one down */
+    /** The only layer is cleared instead. The active one at or above [i] goes one down */
     fun deleteLayer(i: Int) {
         val p = editing ?: return
         if (i !in p.layers.indices) return
         if (p.layers.size > 1) edit(p.copy(layers = p.layers.removed(i), active = if (p.active < i) p.active else (p.active - 1).coerceAtLeast(0)), layers.removed(i)) else clearLayer(i)
     }
 
-    /** The layer stays, its image and strokes go */
     fun clearLayer(i: Int) {
         val p = editing ?: return
         val old = p.layers.getOrNull(i)?.takeIf { it.hasImage } ?: return
@@ -441,8 +433,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         edit(p.copy(layers = p.layers.moved(from, to), active = movedIndex(p.active, from, to)), layers.moved(from, to))
     }
 
-    /** A duplicate shares the file, mask and bitmap with the original: they're immutable (a layer edit writes a NEW file or mask) → no disk or memory cost.
-    Its Layer.id is its own: the tools find a layer by it. The new layer becomes active */
+    /** Shares file, mask and bitmap with the original (immutable) at no cost; its own Layer.id. Becomes active */
     fun addLayer(above: Int, duplicate: Boolean) {
         val p = editing ?: return
         val src = p.layers.getOrNull(above) ?: return
@@ -450,8 +441,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         edit(p.copy(layers = p.layers.inserted(above + 1, layer), active = above + 1), layers.inserted(above + 1, if (duplicate) layers[above] else null))
     }
 
-    /** [idx] ascending, at least two; the result at idx.first() becomes active. Old layer files stay referenced by a history snapshot (Undo restores them), so no release is needed.
-    [onDone] — once the result is in */
+    /** [idx] ascending, ≥ 2; the result at idx.first() becomes active. Old files stay referenced by history: no release. [onDone] — once it's in */
     fun mergeLayers(idx: List<Int>, onDone: () -> Unit) {
         val p = editing ?: return
         val bitmaps = layers.map { it?.asAndroidBitmap() }
@@ -463,36 +453,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Cut, Copy, Clear, Extract, Layer from selection: a layer with an image or strokes, hidden or not, whatever its opacity */
+    /** A layer with an image or strokes, hidden or not */
     fun canCopy(i: Int) = editing?.layers?.getOrNull(i)?.hasImage == true
-    val canCopyMerged get() = editing?.layers?.any { it.visible && it.hasImage } == true // takes visible layers only
+    val canCopyMerged get() = editing?.layers?.any { it.visible && it.hasImage } == true
     val canPaste get() = clip != null
 
     val selection get() = editing?.selection
 
-    /** A checkpoint if it changes */
+    /** A step if it changes */
     fun select(s: Selection?) {
         val p = editing ?: return
         if (s != p.selection) edit(p.copy(selection = s), layers)
     }
 
-    /** Off the main thread: a complex selection takes a while */
+    /** Off the main thread */
     fun invertSelection() {
         val p = editing ?: return
         val s = p.selection ?: return
         runBusy(Dispatchers.IO, "invert", { s.inverted(Rect(0, 0, p.width, p.height)) }) { select(it) }
     }
 
-    /** The selection grown by [grow] px (Selection.grown), its outline smoothed by [smooth] px and its edge blurred by [blur] px (feathered), then placed by [t] as the frame its grown
-    bounds [src] get (Selection.transformed), a step; nothing left on the canvas — none. [onDone] once it's in. Off the main thread */
+    /** Grown by [grow], smoothed by [smooth], blurred by [blur], then placed by [t] as the frame its grown bounds [src] get; a step; nothing left — none.
+    Off the main thread */
     fun transformSelection(grow: Int, blur: Int, smooth: Int, src: Rect, t: ContentTransform, onDone: () -> Unit) {
         val p = editing ?: return
-        // A soft edge that smoothing or blur replaces isn't grown along
+        // A soft edge that smoothing or blur replaces isn't grown
         val s = p.selection?.let { if (blur > 0 || smooth > 0) Selection(it.region, it.outline, drawn = it.drawn) else it } ?: return
         runBusy(Dispatchers.Default, "transform selection", { s.grown(grow)?.feathered(blur, smooth)?.transformed(t, src, p.width, p.height) }) { select(it); onDone() }
     }
 
-    /** [work] on layer [i] — its pixels (null — none), mask and patch — off the main thread */
+    /** [work] on layer [i] (pixels, mask, patch) off the main thread */
     private fun <T> withLayer(i: Int, tag: String, work: ProjectStore.(Layer, Bitmap?, LayerMask?, Tiles?) -> T, onOk: (T) -> Unit) {
         val p = editing ?: return
         val l = p.layers.getOrNull(i) ?: return
@@ -502,10 +492,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runBusy(Dispatchers.IO, tag, { store.work(l, img, m, pt) }, onOk)
     }
 
-    /** Layer [i]'s pixels with any opacity, each separate area with its own contour; off the main thread */
-    fun selectPixels(i: Int) = withLayer(i, "select pixels", { l, img, m, pt -> visibleRegion(l, img, m, pt).toSelection() }) { select(it) }
+    /** Layer [i]'s pixels with any opacity as a selection, once its strokes are baked; off the main thread */
+    fun layerPixels(i: Int, onOk: (Selection?) -> Unit) = whenBaked { withLayer(i, "select pixels", { l, img, m, pt -> visibleRegion(l, img, m, pt).toSelection() }, onOk) }
 
-    /** The magic wand (wandRegion) at canvas px [x], [y] on the active layer, an empty one too (all transparent), joined to the selection by [combine]; off the main thread */
+    fun selectPixels(i: Int) = layerPixels(i, ::select)
+
+    /** Magic wand at canvas px [x], [y] on the active layer, joined by [combine]; off the main thread */
     fun wand(x: Int, y: Int, tolerance: Int, contiguous: Boolean, combine: Region.Op) {
         val p = editing ?: return
         val base = p.selection?.region
@@ -516,7 +508,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }) { select(it) }
     }
 
-    /** Layer [i]'s rect split by the selection (canvas px): the part it reaches and the part it doesn't select fully (a soft edge lies in both); null — no selection or no image */
+    /** Layer [i]'s rect split by the selection: the part it reaches and the part it doesn't select fully; null — no selection or image */
     private fun split(i: Int): Pair<Region, Region>? {
         val p = editing ?: return null
         val s = p.selection ?: return null
@@ -524,8 +516,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return l.region().apply { op(s.reach, Region.Op.INTERSECT) } to l.region().apply { op(s.core, Region.Op.DIFFERENCE) }
     }
 
-    /** By the selection (null — the whole layer), off the main thread: with [keep] layer [i]'s pixels it selects as a new file (see cropLayer), opacity not baked,
-    nothing there → Layer() to null; with [erase] also the layer without them (see cleared) */
+    /** Off the main thread, by the selection (null — whole layer): [keep] — the selected pixels as a new file (cropLayer), nothing → Layer() to null;
+    [erase] — also the layer without them (cleared) */
     private fun crop(i: Int, keep: Boolean, erase: Boolean = false, onOk: (Pair<Pair<Layer, Bitmap?>?, Pair<Layer, List<Tiles>>?>) -> Unit) {
         val s = selection
         withLayer(i, "selection", { l, img, m, pt ->
@@ -533,22 +525,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }, onOk)
     }
 
-    /** Layer [i] gets [r]'s pixels, keeping its visibility and opacity */
+    /** Keeps the layer's visibility and opacity */
     private fun putPixels(i: Int, r: Pair<Layer, Bitmap?>) {
         val l = editing?.layers?.getOrNull(i) ?: return
         putLayer(i, r.first.copy(opacity = l.opacity), r.second?.asImageBitmap(), insert = false)
     }
 
-    /** Layer [i] without a cleared part: its new mask or patch over the same pixels, or no image at all */
+    /** Its new mask or patch over the same pixels, or no image */
     private fun putRest(i: Int, rest: Pair<Layer, List<Tiles>>) {
         val l = editing?.layers?.getOrNull(i) ?: return
         rest.second.forEach { tiles[it.id] = it }
         putLayer(i, rest.first.copy(opacity = l.opacity), layers[i].takeIf { rest.first.file != null }, insert = false)
     }
 
-    /** With a selection — its part of the layer, off the main thread; a layer with a mask or patch likewise as a whole (the clip has neither).
-    Otherwise the image as it lies on the canvas, without the layer's opacity; not in history.
-    The file is copied on the write queue: a paste reads it from the same queue, after the copy */
+    /** With a selection, or a mask or patch — the part off the main thread; else the image as it lies, without opacity. Not in history.
+    The file is copied on the write queue: a paste reads it after the copy */
     fun copy(i: Int) {
         val p = editing ?: return
         val l = p.layers.getOrNull(i) ?: return
@@ -569,15 +560,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!inside.isEmpty) crop(i, keep = true, erase = true) { (c, rest) -> c?.let { (cl, b) -> b?.let { keepClip(cl to it) } }; rest?.let { putRest(i, it) } }
     }
 
-    /** With a selection only its part goes. The layer stays */
+    /** Only the selected part goes; the layer stays */
     fun clear(i: Int) {
         val (inside, _) = split(i) ?: return clearLayer(i)
         if (!inside.isEmpty) crop(i, keep = false, erase = true) { (_, rest) -> rest?.let { putRest(i, it) } }
     }
 
-    /** The Move tool on a selection: its part of layer [i] is cut out right away (the rest only gets a new mask or patch, see cleared) and becomes a pending image in place, right above.
-    Nothing outside the selection (see ProjectStore.isClear) → no cut, [onWhole] opens the tool on the layer itself: no new layer, no empty one left behind.
-    Strokes alone with none of their tiles inside → nothing to move */
+    /** Move on a selection: its part of layer [i] is cut out right away and becomes a pending image right above (the rest gets a new mask or patch).
+    Nothing outside the selection → no cut, [onWhole] moves the layer itself. Strokes with no tiles inside → nothing to move */
     fun moveSelection(i: Int, onWhole: () -> Unit) {
         val (inside, outside) = split(i) ?: return
         if (inside.isEmpty) return
@@ -599,8 +589,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Only the selected part stays: a layer with a file is cropped to it; without one the rest is cleared — the layer stays over the canvas, strokes can go on anywhere.
-    A soft edge's part stays by its coverage */
+    /** Only the selected part stays: a file layer is cropped to it, one without a file has the rest cleared */
     fun extract(i: Int) {
         val (_, outside) = split(i) ?: return
         if (outside.isEmpty) return
@@ -609,8 +598,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         withLayer(i, "selection", { l, _, m, pt -> s.inverted(l.region().bounds)?.let { cleared(l, m, pt, it, stagedName(MASK), stagedName(PATCH)) } }) { rest -> rest?.let { putRest(i, it) } }
     }
 
-    /** Right above [i], the active one: the selected pixels in place, the layer's opacity.
-    Nothing outside the selection (see ProjectStore.isClear) → the same pixels: a duplicate, no new file */
+    /** Right above [i], active: the selected pixels in place. Nothing outside the selection → a duplicate */
     fun layerFromSelection(i: Int) {
         val (inside, outside) = split(i) ?: return
         if (inside.isEmpty) return
@@ -622,7 +610,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Visible layers as on screen: their opacity and masks are baked in, as in merging. With a selection — only its part. Not in history */
+    /** Visible layers as on screen, opacity and masks baked in; with a selection — its part. Not in history */
     fun copyMerged(onDone: () -> Unit) {
         val p = editing ?: return
         val bitmaps = layers.map { it?.asAndroidBitmap() }
@@ -634,8 +622,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Onto a new layer right above [above] via the Move tool: history gets it only on ✓ (applyTransform). Each paste copies the file and gets its own Layer.id — the layer owns them.
-    In place if it fits the canvas (always so in its own project: layers lie within it), otherwise centered */
+    /** A new layer above [above] via the Move tool (history on ✓); its own file copy and Layer.id. In place if it fits the canvas, else centered */
     fun paste(above: Int) {
         val p = editing ?: return
         val (c, img) = clip ?: return
@@ -645,22 +632,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runBusy(io, "paste", { store.copyLayer(p, src, dst); PendingImage(l.copy(file = dst, id = newLayerId()), img, above + 1) }) { pending = it }
     }
 
-    /** Only the last one is kept: the replaced one's file goes */
+    /** Only the last one is kept */
     private fun keepClip(c: Pair<Layer, Bitmap>?) {
         val old = clip?.first?.file
         clip = c
         if (old != null) write { discardStaged(listOf(old)) }
     }
 
-    /** Baked off the main thread in order (the Selection brush's joins the selection, see Stroke.selected); the result is a history step.
-    [onDone] (main thread) — once the result is shown or dropped: the live stroke goes in the same frame */
+    /** Baked off the main thread in order; a history step (the Selection brush's joins the selection). [onDone] (main thread) — once shown or dropped */
     fun stroke(s: Stroke, onDone: () -> Unit) {
         strokes.addLast(s to onDone)
         if (strokes.size == 1) bakeNext()
     }
 
-    /** The layer is found by id: the list may have changed meanwhile; its pixels changed (cleared, cropped) → the stroke is dropped.
-    A selection stroke joins the selection as it is at its turn; changed meanwhile (moved) → joined to the new one */
+    /** The layer is found by id; its pixels changed meanwhile → dropped. A selection stroke joins the selection as it is at its turn */
     private fun bakeNext() {
         val s = strokes.first().first
         val e = editing ?: return baked()
@@ -671,10 +656,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val m = mask(l)
         val p = patch(l)
         val at = l.paintable(e.width, e.height)
-        bakeOff({ s.bake(at, base, m, p, store.stagedName(MASK), store.stagedName(PATCH)) }) { putStroke(s, l, it) }
+        // A figure past the layer: the layer grows to hold it first
+        bakeOff({
+            val g = s.room(at, e.width, e.height)?.let { store.grownLayer(at, base, m, p, it) }
+            g to s.bake(g?.first ?: at, g?.second ?: base, m.takeIf { g == null }, p.takeIf { g == null }, store.stagedName(MASK), store.stagedName(PATCH))
+        }) { (g, r) -> putStroke(s, l, g, r) }
     }
 
-    /** The first stroke's [work] off the main thread, then [put] of its result: false — what it was done over changed meanwhile, the stroke goes again */
+    /** [put] false — what it was done over changed meanwhile: the stroke goes again */
     private fun <T> bakeOff(work: () -> T, put: (T) -> Boolean) {
         viewModelScope.launch {
             val r = withContext(Dispatchers.Default) { runCatching(work) }
@@ -683,16 +672,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** [was] — the layer baked over. false — its mask or patch changed meanwhile (an operation begun before the stroke finished): bake again over the new ones */
-    private fun putStroke(s: Stroke, was: Layer, r: Pair<LayerMask?, Tiles?>?): Boolean {
-        val e = editing ?: return true
-        val at = e.layers.indexOfFirst { it.id == s.layer }
-        val l = e.layers.getOrNull(at)?.takeIf { it.file == s.file } ?: return true
-        if (l.mask != was.mask || l.patch != was.patch) return false
-        val (m, p) = r ?: return true
+    /** [grown] — the layer grown to hold a figure (new file, pixels). false — mask or patch changed meanwhile: bake again */
+    private fun putStroke(s: Stroke, was: Layer, grown: Pair<Layer, Bitmap>?, r: Pair<LayerMask?, Tiles?>?): Boolean {
+        val e = editing
+        val at = e?.layers?.indexOfFirst { it.id == s.layer } ?: -1
+        val l = e?.layers?.getOrNull(at)?.takeIf { it.file == s.file }
+        val again = l != null && (l.mask != was.mask || l.patch != was.patch)
+        if (e == null || l == null || again || r == null) {
+            grown?.first?.file?.let { release(listOf(it)) } // no state takes the new file
+            return !again
+        }
+        val (m, p) = r
         m?.let { tiles[it.id] = it }
         p?.let { tiles[it.id] = it }
-        edit(e.copy(layers = e.layers.putAt(at, l.paintable(e.width, e.height).copy(mask = m?.id, patch = p?.id))), layers)
+        val g = grown?.first?.copy(visible = l.visible, opacity = l.opacity, id = l.id) ?: l.paintable(e.width, e.height)
+        edit(e.copy(layers = e.layers.putAt(at, g.copy(mask = m?.id, patch = p?.id))), grown?.let { layers.putAt(at, it.second.asImageBitmap()) } ?: layers)
         return true
     }
 
@@ -705,7 +699,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun redo() = whenBaked { travel(back = false) }
 
-    /** The tool must be closed. Masks of history states are always in RAM: only pixels may need reading */
+    /** The tool must be closed. History masks are in RAM: only pixels may need reading */
     private fun travel(back: Boolean) {
         val now = editing ?: return
         val target = history.peek(back) ?: return
@@ -718,8 +712,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (need.all { it in have }) go(store.loadLayers(target, have)) else runBusy(Dispatchers.IO, "history", { store.loadLayers(target, have) }, go)
     }
 
-    /** Single entry point for edits recorded in history (open/create/Undo/Redo go straight to show). Call when an edit completes, not on every gesture tick.
-    Its new masks and patches must be in [tiles] by then: a step weighs the tiles only [before] has, and its selection's soft edge if [p]'s isn't the same */
+    /** Single entry for history edits (open/create/Undo/Redo go to show); once per completed edit. Its new rasters must be in [tiles] by then: a step weighs them */
     private fun edit(p: Project, bitmaps: List<ImageBitmap?>) {
         val before = editing ?: return
         val edge = before.selection?.feather?.alpha?.takeIf { it !== p.selection?.feather?.alpha }?.allocationByteCount ?: 0
@@ -735,8 +728,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (next != old) edit(p.copy(layers = p.layers.putAt(i, next)), layers)
     }
 
-    /** Uses current editing/layers, not snapshots from the operation start. [insert] — [placed] becomes a new layer at [i], the active one; otherwise it replaces layer [i], keeping its visibility and id.
-    [rest] — the layer below gets it, keeping its visibility, opacity and id (a cut, see moveSelection). [sel] — the selection afterwards, the current one by default */
+    /** Uses current state. [insert] — [placed] becomes a new active layer at [i], else replaces it (keeping visibility and id). [rest] — the layer below gets it (a cut).
+    [sel] — the selection afterwards */
     private fun putLayer(i: Int, placed: Layer, img: ImageBitmap?, insert: Boolean, rest: Pair<Layer, List<Tiles>>? = null, sel: Selection? = selection) {
         val e = editing ?: return
         var ls = e.layers
@@ -749,7 +742,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         else edit(e.copy(layers = ls.putAt(i, placed.copy(visible = ls[i].visible, id = ls[i].id)), selection = sel), bs.putAt(i, img))
     }
 
-    /** Every state the editor displays passes here → autosaved */
+    /** Every displayed state passes here → autosaved */
     private fun show(p: Project, bitmaps: List<ImageBitmap?>) {
         val used = p.layers.mapNotNullTo(HashSet()) { it.file }
         editing?.layers?.zip(layers)?.forEach { (l, b) -> l.file?.let { k -> if (k !in used && b != null) parked.put(k, b.asAndroidBitmap()) } }
@@ -759,11 +752,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         autosave()
     }
 
-    /** Recovery file = unsaved state of the open session; a clean one needs none. Written AUTOSAVE_DELAY_MS after the last change: a burst of edits is written once.
-    While the dialog is pending the file still belongs to the interrupted session */
+    /** Recovery file = the open session's unsaved state, written AUTOSAVE_DELAY_MS after the last change. While the dialog is pending it belongs to the interrupted session */
     private fun autosave() {
         if (recovered != null) return
-        unsaved = editing?.takeIf { dirty }?.persisted?.let { it to tilesOf(it) } // a session-only change doesn't rewrite the file
+        unsaved = editing?.takeIf { dirty }?.persisted?.let { it to tilesOf(it) } // session-only changes don't rewrite it
         autosaving?.cancel()
         autosaving = viewModelScope.launch {
             delay(AUTOSAVE_DELAY_MS)
@@ -771,8 +763,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** The recovery write still waiting goes into the write queue now (the app leaves the screen). It writes the LATEST state, then discards the files released meanwhile:
-    the file never references a discarded one */
+    /** The pending recovery write goes into the queue now (leaving the screen): the LATEST state, then the files released meanwhile are discarded */
     fun flushAutosave() {
         val job = autosaving ?: return
         job.cancel()
@@ -781,9 +772,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         write { val u = unsaved; saveRecovery(u?.first, u?.second.orEmpty()); discardStaged(gone) }
     }
 
-    /** A layer file is immutable and unique → it lives while any state references it: current or in history. A mask and a patch likewise, in RAM.
-    A staged one no state needs goes after the next recovery write, which no longer references it (the last one may); while the dialog is pending — at once, the file isn't ours.
-    discardStaged doesn't touch project (non-staging) files: project.json on disk still references them; save() prunes them */
+    /** Files are immutable and live while any state references them. A staged one no state needs goes after the next recovery write (at once while the dialog is pending).
+    Project (non-staging) files are left to save()'s pruning */
     private fun release(names: Collection<String>) {
         val used = (history.snapshots + listOfNotNull(editing)).flatMapTo(HashSet()) { it.layers.files() }
         pending?.cut?.rest?.first?.let { used += listOfNotNull(it.mask, it.patch) }

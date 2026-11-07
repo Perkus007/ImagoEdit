@@ -11,8 +11,8 @@ android {
         applicationId = "com.perkus.imagoedit"
         minSdk = 30
         targetSdk = 37
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 3
+        versionName = "1.2"
     }
     externalNativeBuild {
         cmake {

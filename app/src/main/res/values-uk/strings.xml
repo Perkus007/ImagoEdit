@@ -14,7 +14,7 @@
     <string name="new_project">Новий проєкт</string>
     <string name="width">Ширина</string>
     <string name="height">Висота</string>
-    <string name="canvas_limit">Не більше %1$d Мп.\nПонад %2$d Мп працює не на всіх пристроях.</string>
+    <string name="canvas_limit">Не більше %1$d Мп.\nПонад %2$d Мп підтримують не всі пристрої:\nякщо ваш не впорається, застосунок може закритися.\nПрацює автозбереження:\nпісля перезапуску проєкт можна буде відновити.</string>
     <string name="bad_size">Роздільна здатність зображення %1$d×%2$d px. Допустимо від %3$d до %4$d px для кожної сторони.</string>
     <string name="too_large_title">Завелике зображення</string>
     <string name="too_large_text">Зображення %1$d×%2$d px (%3$.1f Мп). Редактор працює із зображеннями до %4$d Мп і до %5$d px по стороні. Зменшити до %6$d×%7$d px?</string>
@@ -36,8 +36,8 @@
     <string name="export_path">Шлях: %1$s</string>
     <string name="info_title">Інформація</string>
     <string name="add_layer">Додати шар</string>
-    <string name="empty_layer">Порожній шар</string>
-    <string name="duplicate_layer">Дублікат шару</string>
+    <string name="empty_layer">Додати порожній шар</string>
+    <string name="duplicate_layer">Дублікат вибраного шару</string>
     <string name="layer_from_selection">Шар із виділення</string>
     <string name="opacity">Непрозорість</string>
     <string name="merging_layers">Об\'єднання шарів</string>

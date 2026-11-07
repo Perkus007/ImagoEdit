@@ -53,20 +53,20 @@ import com.perkus.imagoedit.ui.theme.ScreenBg
 import com.perkus.imagoedit.ui.theme.SmallShape
 import kotlin.math.roundToInt
 
-const val PANEL_ANIM_DURATION_MS = 300 // длительность анимаций панелей: шеврон, раскрытие второго ряда, уход панелей редактора, выезд нижних панелей
-const val DISABLED_ALPHA = 0.3f // непрозрачность неактивной кнопки и пункта меню
+const val PANEL_ANIM_DURATION_MS = 300 // шеврон, ряды, уход и выезд панелей
+const val DISABLED_ALPHA = 0.3f // неактивная кнопка и пункт меню
 val PANEL_ANIM = tween<Float>(PANEL_ANIM_DURATION_MS)
 private val PANEL_RESIZE = tween<IntSize>(PANEL_ANIM_DURATION_MS)
 
-/** A bottom panel's way in and out: slides by its own height and fades */
+/** Slides by its own height and fades */
 val PANEL_IN = slideInVertically(tween(PANEL_ANIM_DURATION_MS)) { it } + fadeIn(PANEL_ANIM)
 val PANEL_OUT = slideOutVertically(tween(PANEL_ANIM_DURATION_MS)) { it } + fadeOut(PANEL_ANIM)
 
-/** A panel row as wide as [buttons] ToolBtns 16dp apart: rows of a panel kept flush */
+/** As wide as [buttons] ToolBtns 16dp apart: rows kept flush */
 fun rowWidth(buttons: Int) = 32.dp * buttons + 16.dp * (buttons - 1)
 
-/** A tool's bottom panel: any [buttons] (ToolBtn); [more] — a row always shown under them; [expanded] unfolds the last rows: [unfolded] if given, then any [fields] (PanelField)
-[fieldsGap] apart. With [onExpand] a chevron toggles it, leading [buttons] if [chevronTop], else [more]. Each slot is its own recomposition scope: state read inside one recomposes only it */
+/** A tool's bottom panel: [buttons]; [more] — a row always under them; [expanded] unfolds [unfolded], then [fields] [fieldsGap] apart. With [onExpand] a chevron toggles it,
+leading [buttons] if [chevronTop], else [more]. Each slot its own recomposition scope */
 @Composable
 fun BottomPanel(expanded: Boolean, onExpand: (() -> Unit)?, modifier: Modifier, buttons: @Composable RowScope.() -> Unit, more: (@Composable RowScope.() -> Unit)? = null,
     unfolded: (@Composable RowScope.() -> Unit)? = null, chevronTop: Boolean = more == null, fieldsGap: Dp = 8.dp, fields: @Composable RowScope.() -> Unit) {
@@ -104,8 +104,8 @@ fun BottomPanel(expanded: Boolean, onExpand: (() -> Unit)?, modifier: Modifier, 
     }
 }
 
-/** A frame tool's panel: the chevron, its [extra] buttons, then the shared ones (ratio lock, snapping, the tool's Undo/Redo, Cancel, ✓); [more] — a row under them;
-the chevron unfolds [unfolded] if given, then fields X, Y, W, H, [extraFields] [fieldsGap] apart. The frame is read ONLY in the fields → during gestures only that row recomposes (and only when expanded) */
+/** A frame tool's panel: chevron, [extra], ratio lock, snapping, Undo/Redo, Cancel, ✓; [more] — a row under them; the chevron unfolds [unfolded], then X, Y, W, H, [extraFields].
+The frame is read ONLY in the fields: gestures recompose only that row */
 @Composable
 fun FramePanel(s: FrameState<*>, modifier: Modifier, extra: @Composable RowScope.() -> Unit = {}, extraFields: @Composable RowScope.() -> Unit = {}, fieldsGap: Dp = 8.dp,
     more: (@Composable RowScope.() -> Unit)? = null, unfolded: (@Composable RowScope.() -> Unit)? = null, onCancel: () -> Unit, onConfirm: () -> Unit) =
@@ -118,23 +118,21 @@ fun FramePanel(s: FrameState<*>, modifier: Modifier, extra: @Composable RowScope
         extraFields()
     }
 
-/** The frame tools' shared buttons: ratio lock, snapping, the tool's Undo/Redo */
 @Composable
 fun FrameButtons(s: FrameState<*>) {
-    ToolBtn(if (s.free) AppIcons.Rectangle else AppIcons.Square) { s.free = !s.free }
+    ToolBtn(if (s.free) AppIcons.UnlinkVertical else AppIcons.LinkVertical) { s.free = !s.free }
     ToolBtn(if (s.snapOff) AppIcons.MagnetOff else AppIcons.MagnetOn) { s.snapOff = !s.snapOff }
     ToolBtn(AppIcons.StepBack, enabled = s.canUndo) { Feedback.tap(); s.undo() }
     ToolBtn(AppIcons.StepForward, enabled = s.canRedo) { Feedback.tap(); s.redo() }
 }
 
-/** A tool panel's end: Cancel, ✓ */
 @Composable
 fun ConfirmButtons(onCancel: () -> Unit, onConfirm: () -> Unit) {
     ToolBtn(AppIcons.Cancel, bg = Red, onClick = onCancel)
     ToolBtn(AppIcons.Check, bg = BtnGreen, onClick = onConfirm)
 }
 
-/** X and Y — the frame bounds' top-left; W and H — the frame's sides */
+/** X, Y — the bounds' top-left; W, H — the frame's sides */
 @Composable
 fun FrameFields(s: FrameState<*>) {
     val t = s.t
@@ -145,13 +143,13 @@ fun FrameFields(s: FrameState<*>) {
     PanelField(t.h, { FieldText(stringResource(R.string.size_h)) }) { s.setField(FrameField.H, it) }
 }
 
-/** A weight/fill [modifier] stretches it: size(32dp) comes after and yields to the incoming constraints. Not [enabled] — translucent as a whole, its background too */
+/** A weight/fill [modifier] stretches it (size comes after and yields). Disabled — translucent as a whole */
 @Composable
 fun ToolBtn(icon: ImageVector, tint: Color = Color.White, bg: Color = Color.Transparent, enabled: Boolean = true, rotation: () -> Float = { 0f }, modifier: Modifier = Modifier,
     indication: Indication? = LocalIndication.current, onClick: () -> Unit
 ) = Box(modifier.size(32.dp).alpha(if (enabled) 1f else DISABLED_ALPHA).clip(SmallShape).background(bg).clickable(interactionSource = null, indication = indication, enabled = enabled, onClick = onClick),
     Alignment.Center) {
-    // Rotation is read in the draw phase (graphicsLayer) → the chevron animation doesn't recompose
+    // Read in the draw phase: the chevron animation doesn't recompose
     Icon(icon, null, Modifier.size(24.dp).graphicsLayer { rotationZ = rotation() }, tint)
 }
 
@@ -165,7 +163,7 @@ private fun fmt(v: Float): String {
     return if (r == r.toInt().toFloat()) r.toInt().toString() else r.toString()
 }
 
-/** A second-row field: [label] (FieldText, FieldIcon) before the value; NumPad ✓ → [onApply] */
+/** NumPad ✓ → [onApply] */
 @Composable
 fun PanelField(value: Float, label: @Composable () -> Unit, suffix: String = "", onApply: (Float) -> Unit) =
     Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -176,7 +174,7 @@ fun PanelField(value: Float, label: @Composable () -> Unit, suffix: String = "",
         )
     }
 
-/** A px value: its [label] (FieldText, FieldIcon), field (NumPad ✓ → [onApply]) and slider (dragged → [onChange], released → [onFinished]) */
+/** [label], field (NumPad ✓ → [onApply]) and slider ([onChange], released → [onFinished]) */
 @Composable
 fun PxSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
     Row(modifier, Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {

@@ -21,18 +21,17 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import kotlin.math.roundToInt
 
-const val EXPORT_MIN_QUALITY = 10 // нижняя граница ползунка качества, %
-private const val EXPORT_DIR = "ImagoEdit" // подпапка в Pictures
-val EXPORT_PATH = "${Environment.DIRECTORY_PICTURES}/$EXPORT_DIR" // путь для подписи в UI
-private val BAD_NAME_CHARS = Regex("[\\\\/:*?\"<>|]") // недопустимы в имени файла
+const val EXPORT_MIN_QUALITY = 10 // %
+private const val EXPORT_DIR = "ImagoEdit"
+val EXPORT_PATH = "${Environment.DIRECTORY_PICTURES}/$EXPORT_DIR"
+private val BAD_NAME_CHARS = Regex("[\\\\/:*?\"<>|]")
 
 /** Labels are proper names, not localized */
 enum class ExportFormat(val label: String, val ext: String, val mime: String) {
     JPEG("JPEG", "jpg", "image/jpeg"), PNG("PNG", "png", "image/png"), WEBP("WebP", "webp", "image/webp"), AVIF("AVIF", "avif", "image/avif")
 }
 
-/** AVIF is always lossy: avif-coder lossless mode writes a YCgCo matrix that Samsung's system decoder can't open.
-[fullChroma] — 4:4:4 for JPEG and AVIF; below 100% 4:2:0: a smaller file */
+/** AVIF is always lossy: avif-coder's lossless mode writes a YCgCo matrix Samsung's decoder can't open. [fullChroma] — 4:4:4 for JPEG and AVIF, below 100% 4:2:0 */
 data class ExportSettings(val format: ExportFormat = ExportFormat.PNG, val quality: Int = 100) {
     val lossless get() = format == ExportFormat.PNG || (format == ExportFormat.WEBP && quality == 100)
     val fullChroma get() = quality == 100
@@ -40,7 +39,7 @@ data class ExportSettings(val format: ExportFormat = ExportFormat.PNG, val quali
 
 class ExportError(cause: Throwable) : RuntimeException(cause)
 
-@Suppress("DEPRECATION") // with MANAGE_EXTERNAL_STORAGE this is the standard way to get the shared Pictures folder
+@Suppress("DEPRECATION") // standard with MANAGE_EXTERNAL_STORAGE
 private fun exportDir() = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), EXPORT_DIR)
 
 /** [first] — bottom visible layer: its color space goes into the file */
@@ -57,11 +56,11 @@ private fun Bitmap.isFullyOpaque(): Boolean {
 }
 
 private fun ProjectStore.composite(p: Project, fmt: ExportFormat): Bitmap {
-    val paints = MaskPaints() // integer offsets: layer pixels are copied 1:1, filtering and anti-aliasing change nothing
+    val paints = MaskPaints() // integer offsets: 1:1 copy
     var out: Bitmap? = null
     try {
         p.layers.filter { it.visible && it.hasImage }.forEach { l ->
-            // One layer at a time from its files (the project isn't open): peak memory = canvas + one layer with its mask and patch + a band of it
+            // One layer at a time from its files: peak memory = canvas + one layer with its mask and patch
             val bmp = l.file?.let { decodeLayer(p, l) }
             var mask: LayerMask? = null
             var patch: Tiles? = null
@@ -72,7 +71,7 @@ private fun ProjectStore.composite(p: Project, fmt: ExportFormat): Bitmap {
             } finally { bmp?.recycle(); mask?.recycle(); patch?.recycle() }
         }
         return (out ?: p.canvasBitmap(fmt, null)).apply {
-            // No transparent pixels → no alpha in the file (PNG is written as RGB: smaller and faster). Checked by pixels: hasAlpha is always true for baked layers
+            // No transparent px → no alpha in the file. Checked by px: hasAlpha is always true for baked layers
             if (fmt != ExportFormat.JPEG && isFullyOpaque()) setHasAlpha(false)
         }
     } catch (e: Throwable) {
@@ -81,8 +80,8 @@ private fun ProjectStore.composite(p: Project, fmt: ExportFormat): Bitmap {
     }
 }
 
-/** libjpeg-turbo and libwebp built from source (app/src/main/cpp): the platform encoders take only quality — JPEG is always 4:2:0, WebP runs at medium effort.
-Both write [path] directly with [icc] embedded; webp recycles [bitmap] once its pixels are copied, so the encoder gets that RAM */
+/** libjpeg-turbo and libwebp (app/src/main/cpp): platform encoders take only quality (JPEG always 4:2:0, WebP at medium effort). Write [path] with [icc];
+webp recycles [bitmap] once its pixels are copied */
 @Keep
 private object Encoders {
     init { System.loadLibrary("imagoedit") }
@@ -90,7 +89,7 @@ private object Encoders {
     external fun webp(bitmap: Bitmap, quality: Int, lossless: Boolean, icc: ByteArray, path: String)
 }
 
-/** Matrix/TRC ICC v4 profile of the color space, built like Skia's for the platform encoders. The canvas space is RGB with a parametric curve: createBitmap requires it */
+/** Matrix/TRC ICC v4 profile, built like Skia's. The canvas space is RGB with a parametric curve: createBitmap requires it */
 private fun Bitmap.icc(): ByteArray {
     val cs = colorSpace as ColorSpace.Rgb
     fun ByteBuffer.fixed(vararg v: Double) = apply { v.forEach { putInt((it * 65536).roundToInt()) } } // s15Fixed16
@@ -104,7 +103,7 @@ private fun Bitmap.icc(): ByteArray {
     val tags = listOf("desc" to text(cs.name), "cprt" to text("CC0"), "wtpt" to xyz(*d50),
         "rXYZ" to xyz(m[0], m[1], m[2]), "gXYZ" to xyz(m[3], m[4], m[5]), "bXYZ" to xyz(m[6], m[7], m[8]), "rTRC" to trc, "gTRC" to trc, "bTRC" to trc)
     val data = tags.map { it.second }.distinct() // the three curves share one copy
-    val offsets = data.runningFold(128 + 4 + 12 * tags.size) { o, d -> o + ((d.size + 3) and 3.inv()) } // tags 4-byte aligned
+    val offsets = data.runningFold(128 + 4 + 12 * tags.size) { o, d -> o + ((d.size + 3) and 3.inv()) } // 4-byte aligned
     return ByteBuffer.allocate(offsets.last()).apply {
         putInt(offsets.last()).putInt(0).putInt(0x04300000).put("mntrRGB XYZ ".toByteArray()).putShort(2026).putShort(1).putShort(1)
         position(36); put("acsp".toByteArray())
@@ -116,7 +115,7 @@ private fun Bitmap.icc(): ByteArray {
 }
 
 private fun Bitmap.encode(s: ExportSettings, dst: File) = when (s.format) {
-    // AUTO in avif-coder is always 4:2:0 → full-res chroma at 100%
+    // avif-coder's AUTO is always 4:2:0
     ExportFormat.AVIF -> dst.writeBytes(Coder().encodeAvif(this, options = AvifEncodingOptions(quality = s.quality, preciseMode = PreciseMode.LOSSY, speed = AvSpeed.SLOW,
         chromaSubsampling = if (s.fullChroma) AvifChromaSubsampling.YUV444 else AvifChromaSubsampling.AUTO)))
     ExportFormat.JPEG -> Encoders.jpeg(this, s.quality, s.fullChroma, icc(), dst.path)
@@ -132,7 +131,7 @@ fun ProjectStore.exportImage(ctx: Context, p: Project, s: ExportSettings): File 
     val dst = generateSequence(0) { it + 1 }
         .map { File(dir, if (it == 0) "$base.${s.format.ext}" else "$base ($it).${s.format.ext}") }
         .first { !it.exists() }
-    val tmp = File(dir, ".${dst.name}.tmp") // temp file + rename: an interrupted export leaves no broken image in the gallery
+    val tmp = File(dir, ".${dst.name}.tmp") // temp + rename: an interrupted export leaves no broken image
     tmp.deleteOnFailure {
         try { bmp.encode(s, tmp) } finally { bmp.recycle() }
         Files.move(tmp.toPath(), dst.toPath(), StandardCopyOption.ATOMIC_MOVE)

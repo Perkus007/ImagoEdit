@@ -87,7 +87,7 @@ private const val COPYRIGHT = "© 2026 Perkus"
 private const val LICENSE_NAME = "GPL-3.0-or-later"
 private const val LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
 
-// Third-party code and fonts in the APK: BSD, MIT, OFL, Apache-2.0 require their notices to ship with the binary. Texts: res/values/licenses.xml
+// Third-party code and fonts in the APK: their notices ship with the binary (texts: res/values/licenses.xml)
 private val NOTICES = listOf(
     "libjpeg-turbo" to R.string.notice_libjpeg_turbo,
     "libwebp, libyuv" to R.string.notice_bsd3,
@@ -100,13 +100,13 @@ private val NOTICES = listOf(
 )
 private val NOTICES_W = 600.dp
 
-// Языки приложения: тег → название на самом языке. "en" — язык по умолчанию (values/)
+// Тег → название на самом языке; "en" — по умолчанию (values/)
 private val LANGUAGES = listOf("en" to "English", "ru" to "Русский", "uk" to "Українська")
 
-private val TICKER_W = 100.dp // ширина рамки тикера: адреса в строках начинаются с одной линии
+private val TICKER_W = 100.dp // адреса начинаются с одной линии
 private val LinkStyles = TextLinkStyles(SpanStyle(color = LinkBlue))
 
-/** Drawn over the menu: it stays in composition, the grid scroll position is kept */
+/** Over the menu: the grid scroll is kept */
 @Composable
 fun SettingsScreen(onClose: () -> Unit) {
     BackHandler(onBack = onClose)
@@ -125,7 +125,7 @@ fun SettingsScreen(onClose: () -> Unit) {
                 IconBtn(AppIcons.Cancel, onClick = onClose)
                 AppTitle(Modifier.weight(1f))
             }
-            // No stretch overscroll (here and in the notices): it resamples the drawn layer, text pixels shift
+            // No stretch overscroll: it resamples the layer, text pixels shift
             Row(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState(), overscrollEffect = null).padding(16.dp), Arrangement.spacedBy(24.dp)) {
                 Column(Modifier.weight(1f), Arrangement.spacedBy(12.dp)) {
                     Text(stringResource(R.string.app_info), fontSize = 14.sp)
@@ -136,13 +136,15 @@ fun SettingsScreen(onClose: () -> Unit) {
                     ButtonRow {
                         LANGUAGES.forEach { (code, name) ->
                             DialogButton(name, if (code == language) BtnGreen else BtnGray, Modifier.weight(1f)) {
-                                // Language applies on Activity creation (see withAppLanguage) → recreate it
+                                // Applied on Activity creation (withAppLanguage)
                                 if (code != language) { settings.language = code; activity?.recreate() }
                             }
                         }
                     }
-                    SwitchRow(stringResource(R.string.vibration), vibration) { vibration = it; settings.vibration = it }
-                    SwitchRow(stringResource(R.string.sounds), sounds) { sounds = it; Feedback.sounds = it }
+                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                        SwitchRow(stringResource(R.string.vibration), vibration, Modifier.weight(1f)) { vibration = it; settings.vibration = it }
+                        SwitchRow(stringResource(R.string.sounds), sounds, Modifier.weight(1f)) { sounds = it; Feedback.sounds = it }
+                    }
                     HorizontalDivider()
                     Text("${stringResource(R.string.app_name)} ${BuildConfig.VERSION_NAME} · $COPYRIGHT", fontSize = 14.sp)
                     LinkText(LinkAnnotation.Clickable("license", LinkStyles) { showLicense = true }, LICENSE_NAME, "${stringResource(R.string.license)} ")
@@ -161,7 +163,7 @@ fun SettingsScreen(onClose: () -> Unit) {
         LinkText(LinkAnnotation.Url(LICENSE_URL, LinkStyles), "gnu.org/licenses/gpl-3.0")
     }
 
-    // Lazy by paragraph: the whole text at once is a long layout on a budget device
+    // Lazy by paragraph: the whole text is a long layout on a budget device
     if (showNotices) AppDialog(stringResource(R.string.third_party), { showNotices = false }, NOTICES_W, SideBarBg) {
         val res = LocalResources.current
         val notices = remember(LocalConfiguration.current) { NOTICES.map { (name, id) -> name to res.getString(id).split("\n\n") } }
@@ -182,8 +184,8 @@ private fun CoinRow(ticker: String, address: String, onCopy: () -> Unit) =
     }
 
 @Composable
-private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Unit) =
-    Row(Modifier.fillMaxWidth().toggleable(checked, role = Role.Switch, onValueChange = onChange), verticalAlignment = Alignment.CenterVertically) {
+private fun SwitchRow(label: String, checked: Boolean, modifier: Modifier, onChange: (Boolean) -> Unit) =
+    Row(modifier.toggleable(checked, role = Role.Switch, onValueChange = onChange), verticalAlignment = Alignment.CenterVertically) {
         Text(label, Modifier.weight(1f), fontSize = 16.sp)
         AppSwitch(checked)
     }
@@ -192,7 +194,7 @@ private fun SwitchRow(label: String, checked: Boolean, onChange: (Boolean) -> Un
 private fun LinkText(link: LinkAnnotation, text: String, prefix: String = "") =
     Text(buildAnnotatedString { append(prefix); withLink(link) { append(text) } }, fontSize = 14.sp)
 
-/** Since Android 13 the system confirms the copy itself; before that — a toast */
+/** Android 13+ confirms the copy itself; before — a toast */
 @Suppress("UsePropertyAccessSyntax")
 private fun Context.copyToClipboard(label: String, text: String) {
     getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(label, text))

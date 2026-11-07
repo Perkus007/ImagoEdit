@@ -10,23 +10,22 @@ import android.util.Size
 import java.io.File
 import kotlin.math.sqrt
 
-const val IO_BUFFER = 1 shl 16 // блок записи на общую память (FUSE): меньше системных вызовов
+const val IO_BUFFER = 1 shl 16 // блок записи на общую память (FUSE)
 
 class BadImageSize(val width: Int, val height: Int) : RuntimeException()
 
-/** An imported image over the canvas limits: [size] as it is, [fit] reduced to them. Imported only once the user agrees to reduce it */
+/** An import over the canvas limits: [size] as is, [fit] reduced; imported only once the user agrees */
 class TooLarge(val size: Size, val fit: Size) : RuntimeException()
 
-/** A new layer awaiting the Move tool's ✓, then inserted at [index]. [layer]'s file is its own (discarded on cancel).
-[cut] — it was cut from the layer right below (see AppViewModel.moveSelection). Create off the main thread: [start] scans pixels */
+/** A new layer awaiting the Move tool's ✓, then inserted at [index]; its file is its own. [cut] — cut from the layer below (moveSelection). Create off the main thread */
 class PendingImage(val layer: Layer, val bitmap: Bitmap, val index: Int, val cut: Cut? = null) {
     val start = ContentTransform.initial(contentBox(bitmap, bitmap.width, bitmap.height).oriented(layer.orient), layer.x, layer.y, layer.w, layer.h)
 }
 
-/** [rest] — the source layer without [area] (see cleared) with the new mask or patch it references (RAM only, dropped on cancel), or an empty layer; [area] — the part cut, canvas px */
+/** [rest] — the source without [area] and its new rasters (RAM only), or an empty layer; [area] — the cut part, canvas px */
 class Cut(val rest: Pair<Layer, List<Tiles>>, val area: Region)
 
-/** Software pixels (the editor reads and writes them), EXIF orientation applied. [mutable] — for editing in place. [header] sees the size first and may set a target one */
+/** Software pixels, EXIF orientation applied; [header] may set a target size */
 fun File.decodeImage(mutable: Boolean = false, header: (ImageDecoder, Size) -> Unit = { _, _ -> }): Bitmap =
     ImageDecoder.decodeBitmap(ImageDecoder.createSource(this)) { d, info, _ ->
         d.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
@@ -34,15 +33,14 @@ fun File.decodeImage(mutable: Boolean = false, header: (ImageDecoder, Size) -> U
         header(d, info.size)
     }
 
-/** [s] reduced in proportion to the canvas limits: MAX_SIDE per side, MAX_PIXELS in all; within them — as is */
+/** Reduced in proportion to MAX_SIDE and MAX_PIXELS; within them — as is */
 private fun fitted(s: Size): Size {
     val k = minOf(1.0, MAX_SIDE.toDouble() / maxOf(s.width, s.height), sqrt(MAX_PIXELS.toDouble() / (s.width.toLong() * s.height)))
     return if (k == 1.0) s else Size((s.width * k).toInt(), (s.height * k).toInt())
 }
 
-/** An imported image as a layer at (0, 0) and its pixels. The file is the original copied byte-for-byte (format, EXIF and profile kept; the Uri is read once),
-unless it's reduced or 16-bit (decoded to F16, 8 B per pixel): then its 8-bit pixels are written instead — a layer's file decodes exactly to its pixels.
-Over the canvas limits → TooLarge; with [reduce] reduced to fit */
+/** A layer at (0, 0) and its pixels: the original copied byte-for-byte, unless reduced or 16-bit — then its 8-bit pixels (a layer's file decodes exactly to them).
+Over the limits → TooLarge; with [reduce] reduced */
 fun ProjectStore.importImage(resolver: ContentResolver, uri: Uri, reduce: Boolean): Pair<Layer, Bitmap> {
     val src = newStaged(resolver.getType(uri))
     return src.deleteOnFailure {

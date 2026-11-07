@@ -33,20 +33,19 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
-private const val LEVEL_MIN = 64 // длинная сторона самой мелкой копии не больше, px
+private const val LEVEL_MIN = 64 // длинная сторона самой мелкой копии, px
 
-/** Display copies of layers. Keyed by the [Bitmap], not the ImageBitmap wrapper: an added photo's wrapper changes on confirm while pixels stay the same → copies aren't rebuilt.
-Value: [0] — whole layer, then 2×, 4×, … smaller. Copies are HARDWARE; out of memory → [0] is the software original */
+/** Display copies by [Bitmap] (an added photo's wrapper changes on confirm, its pixels don't): [0] — whole, then 2×, 4×… smaller. HARDWARE; out of memory → the original */
 typealias Levels = Map<Bitmap, List<ImageBitmap>>
 
-/** Read in the draw phase → redraw without recomposition. Display only */
+/** Read in the draw phase. Display only */
 @Composable
 fun rememberLevels(layers: List<ImageBitmap?>): State<Levels> {
     val levels = remember { mutableStateOf<Levels>(emptyMap()) }
     val alive = remember(layers) { layers.mapNotNull { it?.asAndroidBitmap() }.toSet() }
     val aliveNow = rememberUpdatedState(alive)
     LaunchedEffect(alive) { levels.value = levels.value.filterKeys { it in alive } }
-    // One worker per composition: a list change doesn't interrupt building, only changes what's built next. No parallel builds
+    // One worker: a list change only changes what's built next
     LaunchedEffect(Unit) {
         while (true) {
             val bmp = snapshotFlow { aliveNow.value.firstOrNull { it !in levels.value } }.filterNotNull().first()
@@ -57,7 +56,7 @@ fun rememberLevels(layers: List<ImageBitmap?>): State<Levels> {
     return levels
 }
 
-/** [needed] is checked between levels: false → null, the rest isn't built */
+/** [needed] false between levels → null */
 private fun Bitmap.buildLevels(needed: () -> Boolean): List<ImageBitmap>? {
     val out = ArrayList<ImageBitmap>()
     out += (copy(Bitmap.Config.HARDWARE, false) ?: this).asImageBitmap()
@@ -76,37 +75,36 @@ private fun Bitmap.buildLevels(needed: () -> Boolean): List<ImageBitmap>? {
     return out
 }
 
-/** Smallest copy downscaled by at most 2× for [k] px per original px (drawPlaced's: its detail applied) */
+/** Smallest copy downscaled ≤ 2× at [k] px per original px */
 private fun pickLevel(img: ImageBitmap, levels: List<ImageBitmap>?, k: Float): ImageBitmap {
     if (levels.isNullOrEmpty()) return img
     return levels[minOf(levelFor(k), levels.lastIndex)]
 }
 
-/** Bilinear below 2×, pixels as squares above. No mipmaps on purpose: pickLevel already chose a copy downscaled by at most 2×, and mipmaps of a large bitmap are built on the CPU and cause stalls */
+/** Bilinear below 2×, squares above. No mipmaps: a large bitmap's are built on the CPU and stall */
 private fun filtered(scale: Float) = scale < 2f
 
-private val paints = MaskPaints() // main thread only: the canvas and the layer thumbnails
+private val paints = MaskPaints() // main thread only
 
-/** A layer as the canvas draws it: [layer] (an empty one as Layer.paintable: it may be taking a stroke), its pixels [img] (null — none), [mask], [patch] */
+/** As the canvas draws a layer: an empty one as Layer.paintable (it may take a stroke) */
 class Drawn(val layer: Layer, val img: ImageBitmap?, val mask: LayerMask?, val patch: Tiles?)
 
-/** [img] — the layer's pixels (null — none), its file [fw]×[fh] px; [t] is for the layer AFTER orientation [orient]. Clipping to the canvas mirrors baking's crop.
-Through the compositing of export (drawMasked): an offscreen only with a [mask], a [patch] over pixels or live [strokes] of the layer [key] (Layer.id); nothing to draw → nothing.
-No anti-aliasing: the layer's edge follows the pixel grid, as baked. Only turned pixels alone (the Move tool's preview) keep it: a stair-stepped slanted edge would flicker while dragged.
-[detail] scales the resolution its copies (pixels, mask, patch) are picked for: below 1 — coarser ones, stretched on screen but with fewer texels to read */
+/** [t] is for the layer AFTER [orient]; clipped to the canvas as baking crops. Through drawMasked: an offscreen only with a mask, a patch over pixels or live [strokes].
+No AA (the edge follows the pixel grid, as baked) except turned plain pixels: a stair-stepped slanted edge would flicker while dragged.
+[detail] < 1 picks coarser copies: fewer texels to read */
 fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransform, s: Float, canvasW: Int, canvasH: Int, levels: List<ImageBitmap>? = null, alpha: Float = 1f, orient: Int = 0,
     mask: LayerMask? = null, patch: Tiles? = null, strokes: BrushTool? = null, key: Long = 0L, detail: Float = 1f) {
     val live = strokes?.has(key) == true
     if (img == null && patch == null && !live) return
     val b = t.box
-    // Screen px per file px, from the visible part (box); sizes after orientation
+    // Screen px per file px, from the visible part; sizes after orientation
     val ow = orientW(orient, fw, fh)
     val oh = orientH(orient, fw, fh)
     val kx = t.w * s / (b.width * ow)
     val ky = t.h * s / (b.height * oh)
-    val k = maxOf(kx, ky) * detail // what the copies are picked for
+    val k = maxOf(kx, ky) * detail
     clipRect(0f, 0f, canvasW * s, canvasH * s) {
-        // Same order as ContentTransform.matrix: file → orientation → visible part center → scale with flip → rotation → translation
+        // ContentTransform.matrix's order
         withTransform({
             translate(t.cx * s, t.cy * s)
             rotate(t.angle, Offset.Zero)
@@ -117,7 +115,7 @@ fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransfor
             translate(-fw / 2f, -fh / 2f)
         }) {
             paints.image.isAntiAlias = mask == null && patch == null && !t.axisAligned
-            // A smaller copy is stretched over the file's px: the mask, patch and strokes are in them
+            // A smaller copy is stretched over the file's px
             drawContext.canvas.nativeCanvas.drawMasked(img?.let { pickLevel(it, levels, k).asAndroidBitmap() }, fw, fh, mask, patch, k, (alpha * 255).roundToInt(), filtered(minOf(kx, ky)),
                 paints, strokes.takeIf { live }, key)
         }

@@ -9,17 +9,17 @@ import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private const val SWEEPS = 2 // проходы сглаживания (красно-чёрный Гаусс — Зейдель) до и после спуска на грубый уровень в V-цикле
-private const val COARSEST_SWEEPS = 50 // проходы на самом грубом уровне: там лишь несколько клеток, решается почти точно
-private const val MAX_CYCLES = 30 // наибольшее число V-циклов на канал
-private const val SETTLED = 0.02f // V-цикл не сдвинул ни одну клетку больше чем на столько (из 255) — сошлось: ошибка того же порядка, глазу не видна
-private const val FULL = 255 * 255 // покрытие × непрозрачность штриха целиком
+private const val SWEEPS = 2 // проходы Гаусса — Зейделя до и после грубого уровня V-цикла
+private const val COARSEST_SWEEPS = 50 // на самом грубом уровне: решается почти точно
+private const val MAX_CYCLES = 30
+private const val SETTLED = 0.02f // V-цикл сдвинул клетки меньше (из 255) — сошлось
+private const val FULL = 255 * 255 // покрытие × непрозрачность целиком
 
-/** A healing stroke's result over [box] (file px): its coverage [cover] ([stride] B a row) and the healed pixels [px] (premultiplied RGBA, [box]'s width a row) */
+/** A healing stroke's coverage [cover] ([stride] B a row) and healed px [px] (premultiplied RGBA) over [box], file px */
 internal class Healed(private val box: Rect, private val cover: ByteArray, private val stride: Int, private val px: ByteArray) {
     private val raw = ByteArray(TILE * TILE * 4)
 
-    /** Patch tile [t] at file px ([x0], [y0]) — the layer before the stroke — toward the healed pixels by the coverage × [opacity] (0..255) */
+    /** Patch tile [t] at ([x0], [y0]) toward the healed px by coverage × [opacity] (0..255) */
     fun into(t: Bitmap, x0: Int, y0: Int, opacity: Int) {
         val left = maxOf(x0, box.left)
         val top = maxOf(y0, box.top)
@@ -39,10 +39,8 @@ internal class Healed(private val box: Rect, private val cover: ByteArray, priva
     }
 }
 
-/** Off the main thread. This healing stroke's result (Poisson cloning): where it covers anything (Ω) — the source ([clone]'s offset) plus a membrane, harmonic in Ω and on its rim
-the layer minus the source: the source's texture takes the surroundings' tone and color with no seam. The layer's edge is no rim: nothing to meet there.
-[w]×[h] — the layer, file px; [rects] — the selection's, file px (null — none); [cover], [render] — the stroke's coverage, the layer as it is, from file px into a bitmap;
-[base] — the layer's pixels (their kind). Covers nothing → null. Each channel is solved in turn: RAM for one */
+/** Off the main thread. Poisson cloning: in the covered area Ω — the source plus a membrane harmonic in Ω, meeting the layer on Ω's rim: the source's texture takes
+the surroundings' tone with no seam (the layer's edge is no rim). Covers nothing → null. Channels are solved one by one */
 internal fun Stroke.healed(w: Int, h: Int, rects: IntArray?, cover: (Bitmap, Int, Int) -> Unit, render: (Bitmap, Int, Int) -> Unit, base: Bitmap?): Healed? {
     val c = clone ?: return null
     var left = Float.MAX_VALUE
@@ -55,7 +53,6 @@ internal fun Stroke.healed(w: Int, h: Int, rects: IntArray?, cover: (Bitmap, Int
         top = minOf(top, xy[2 * i + 1])
         bottom = maxOf(bottom, xy[2 * i + 1])
     }
-    // The dabs' reach and the rim around it
     val box = Rect(floor(left - r).toInt() - 1, floor(top - r).toInt() - 1, ceil(right + r).toInt() + 1, ceil(bottom + r).toInt() + 1)
     if (!box.intersect(0, 0, w, h)) return null
     if (rects != null) {
@@ -79,10 +76,10 @@ internal fun Stroke.healed(w: Int, h: Int, rects: IntArray?, cover: (Bitmap, Int
     for (y in 0 until bh) for (x in 0 until bw) if (cov[y * stride + x].toInt() != 0) { inside[y * bw + x] = true; any = true }
     if (!any) return null
 
-    // The source over the box; the layer itself on the rim: the cells just outside Ω, beside it
+    // The source over the box; the layer on Ω's rim
     val px = ByteArray(4 * n)
     var rim = IntArray(1024)
-    var near = IntArray(1024) // the layer's pixel there, RGBA bytes from the low one
+    var near = IntArray(1024)
     var m = 0
     val tile = patchTile(base)
     val raw = ByteArray(TILE * TILE * 4)
@@ -122,7 +119,7 @@ internal fun Stroke.healed(w: Int, h: Int, rects: IntArray?, cover: (Bitmap, Int
             sum += d
             if (d != 0) off = true
         }
-        if (!off) continue // the source meets the surroundings as is
+        if (!off) continue
         val mean = sum / m
         for (i in 0 until n) if (inside[i]) g.v[i] = mean
         g.solve()
@@ -139,9 +136,8 @@ internal fun Stroke.healed(w: Int, h: Int, rects: IntArray?, cover: (Bitmap, Int
     return Healed(box, cov, stride, px)
 }
 
-/** A level of the membrane solve (multigrid): [w]×[h] cells, unknown where [inside], held elsewhere. Level 0 holds the boundary there (only the cells beside Ω are read);
-a coarser one solves for the finer one's error: holds 0, [b] — the finer residual summed (null — 0). No neighbor past the edge: the layer's edge, nothing to meet.
-A coarser cell is inside only where all its 2×2 are: each level keeps a held rim, never left with no boundary */
+/** A multigrid level: unknown where [inside], held elsewhere. Level 0 holds the boundary; a coarser one solves the finer one's error ([b] — its residual).
+A coarser cell is inside only where all its 2×2 are: each level keeps a held rim */
 private class Grid(val w: Int, val h: Int, val inside: BooleanArray, val b: FloatArray?) {
     val v = FloatArray(w * h)
     private val coarse = coarser()
@@ -169,7 +165,7 @@ private class Grid(val w: Int, val h: Int, val inside: BooleanArray, val b: Floa
         repeat(MAX_CYCLES) { if (cycle() < SETTLED) return }
     }
 
-    /** The most a cell moved in the cycle's last steps here */
+    /** Returns the most a cell moved */
     private fun cycle(): Float {
         val c = coarse
         var moved = 0f
@@ -196,7 +192,7 @@ private class Grid(val w: Int, val h: Int, val inside: BooleanArray, val b: Floa
 
     private fun degree(x: Int, y: Int) = (if (x > 0) 1 else 0) + (if (x < w - 1) 1 else 0) + (if (y > 0) 1 else 0) + (if (y < h - 1) 1 else 0)
 
-    /** Red-black Gauss–Seidel over Σneighbors − degree·v = b; the most a cell moved */
+    /** Red-black Gauss–Seidel; returns the most a cell moved */
     private fun smooth(): Float {
         val rhs = b
         var most = 0f
@@ -217,7 +213,7 @@ private class Grid(val w: Int, val h: Int, val inside: BooleanArray, val b: Floa
         return most
     }
 
-    /** The residual summed into [c]'s inside cells — its right side at twice the spacing; its values zeroed */
+    /** The residual into [c]'s right side; its values zeroed */
     private fun restrict(c: Grid) {
         val cb = c.b ?: return
         val rhs = b
@@ -234,7 +230,7 @@ private class Grid(val w: Int, val h: Int, val inside: BooleanArray, val b: Floa
         }
     }
 
-    /** [c]'s correction added bilinearly (cell-centered: 9/16, 3/16, 3/16, 1/16) where inside; the most added */
+    /** [c]'s correction added bilinearly; returns the most added */
     private fun prolong(c: Grid): Float {
         val cv = c.v
         var most = 0f

@@ -14,7 +14,7 @@
     <string name="new_project">New project</string>
     <string name="width">Width</string>
     <string name="height">Height</string>
-    <string name="canvas_limit">Up to %1$d MP.\nOver %2$d MP may not work on every device.</string>
+    <string name="canvas_limit">Up to %1$d MP.\nNot every device handles over %2$d MP:\nif yours can\'t, the app may close.\nAutosave is on:\nafter a restart, the project can be restored.</string>
     <string name="bad_size">Image resolution is %1$d×%2$d px. Allowed: from %3$d to %4$d px on each side.</string>
     <string name="too_large_title">Image too large</string>
     <string name="too_large_text">The image is %1$d×%2$d px (%3$.1f MP). The editor works with images up to %4$d MP and %5$d px per side. Reduce it to %6$d×%7$d px?</string>
@@ -36,7 +36,7 @@
     <string name="export_path">Path: %1$s</string>
     <string name="info_title">Information</string>
     <string name="add_layer">Add layer</string>
-    <string name="empty_layer">Empty layer</string>
+    <string name="empty_layer">Add an empty layer</string>
     <string name="duplicate_layer">Duplicate layer</string>
     <string name="layer_from_selection">Layer from selection</string>
     <string name="opacity">Opacity</string>

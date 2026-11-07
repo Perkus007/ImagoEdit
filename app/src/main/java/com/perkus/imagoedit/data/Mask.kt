@@ -11,19 +11,18 @@ import android.graphics.RectF
 import android.graphics.Region
 import androidx.core.graphics.createBitmap
 
-const val MASK = "mask" // расширение файла маски стирания слоя
-private const val MASK_BAND = 256 // высота полосы программной сборки слоя с маской, px результата: offscreen-буфер размером с полосу, а не со слой
+const val MASK = "mask"
+private const val MASK_BAND = 256 // px: программная сборка идёт полосами — offscreen размером с полосу
 
-/** ALPHA_8 Tiles of the ERASED amount (255 — erased), drawn DST_OUT: the same whether ALPHA_8 is drawn as alpha (GPU)
-or as coverage of the paint's color (Skia's software canvas). A missing tile — nothing erased */
+/** ALPHA_8 tiles of the ERASED amount (255 — erased), drawn DST_OUT: the same on GPU (alpha) and on Skia's software canvas (coverage). Missing tile — nothing erased */
 typealias LayerMask = Tiles
 
 fun blankMaskTile() = createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8)
 
-/** How much of the pixel at file px [x], [y] is kept, 0..1 */
+/** The kept part, 0..1 */
 fun LayerMask.alphaAt(x: Int, y: Int) = levels[0][y / TILE * cols(0) + x / TILE]?.let { 1f - (it.getPixel(x % TILE, y % TILE) ushr 24) / 255f } ?: 1f
 
-/** Each alpha of [px] (non-premultiplied) × the part it keeps, rounded up: zero only where it erases fully. A line of [len] file px from [x], [y] along X or Y. [tmp] — TILE ints */
+/** Alphas of [px] (non-premultiplied) × the kept part, rounded up: zero only where fully erased. [tmp] — TILE ints */
 fun LayerMask.erase(px: IntArray, x: Int, y: Int, alongX: Boolean, len: Int, tmp: IntArray) {
     val cols = cols(0)
     var i = 0
@@ -43,10 +42,10 @@ fun LayerMask.erase(px: IntArray, x: Int, y: Int, alongX: Boolean, len: Int, tmp
     }
 }
 
-/** Reused; each drawing thread its own */
+/** Reused; one per drawing thread */
 class MaskPaints {
     val layer = Paint()
-    val image = Paint().apply { isAntiAlias = false } // an anti-aliased rim pixel past the mask's tiles would stay unerased
+    val image = Paint().apply { isAntiAlias = false } // an AA rim px past the mask's tiles would stay unerased
     val mask = tilePaint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
     val patch = tilePaint()
     val add = PorterDuffXfermode(PorterDuff.Mode.ADD)
@@ -54,16 +53,14 @@ class MaskPaints {
     val clip = Rect()
 }
 
-/** The brush's live strokes of layer [key] (Layer.id): inside its offscreen over the pixels, mask and patch, file px.
-[bmp], [w], [h], [mask], [patch], [k] — the layer as drawMasked draws it: a clone stroke draws it again, shifted */
+/** The brush's live strokes of layer [key], drawn inside its offscreen; [bmp]…[k] — the layer as drawMasked draws it (a clone redraws it shifted) */
 interface MaskOverlay {
     fun draw(c: Canvas, key: Long, filter: Boolean, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float)
 }
 
-/** [bmp] — the layer's pixels or a smaller copy (null — none) over its [w]×[h] file px, × [mask], + [patch] (ADD): the mask cuts out the pixels under the patch's tiles,
-the two are disjoint, so at a coarser level, where filtering blends drawn and untouched areas, they sum to a whole (SRC_OVER would leave alpha 1 − f·(1 − f) there:
-a see-through seam along the patch's tile edges). Levels for [k] device px per file px. Single compositing path of preview, merge, crop, export, thumbnails and clone sources.
-A software canvas goes by bands over its clip only: the offscreen stays a band, not the whole layer; a tile of a big layer isn't banded through all of it */
+/** [bmp] (or a smaller copy; null — none) over [w]×[h] file px × [mask] + [patch] by ADD: mask and patch are disjoint, so filtered coarse levels sum to a whole
+(SRC_OVER leaves a see-through seam at patch tile edges). Levels for [k] px per file px. The single compositing path: preview, merge, crop, export, thumbnails, clone.
+A software canvas goes in bands over its clip only */
 fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float, alpha: Int, filter: Boolean, p: MaskPaints, overlay: MaskOverlay? = null, key: Long = 0L) {
     p.image.isFilterBitmap = filter
     p.mask.isFilterBitmap = filter
@@ -105,15 +102,16 @@ fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Til
     }
 }
 
-/** [into] (software) gets a [w]×[h] layer — its pixels [bmp] × [mask] + [patch] at level 0 — from its file px ([x], [y]): an exact copy, transparent past the layer */
-fun Canvas.composite(into: Bitmap, x: Int, y: Int, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, p: MaskPaints) {
+/** [into] (software) gets the layer from px ([x], [y]) at [k] px per file px, transparent past it; k = 1 — an exact copy */
+fun Canvas.composite(into: Bitmap, x: Int, y: Int, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, p: MaskPaints, k: Float = 1f) {
     into.eraseColor(Color.TRANSPARENT)
     setBitmap(into)
     translate(-x.toFloat(), -y.toFloat())
-    drawMasked(bmp, w, h, mask, patch, 1f, 255, false, p)
+    scale(k, k)
+    drawMasked(bmp, w, h, mask, patch, k, 255, k != 1f, p)
 }
 
-/** Clipped to the layer: the edge tiles' padding stays unseen, a rotated preview included */
+/** Clipped to the layer: edge tiles' padding stays unseen */
 private fun Canvas.drawPatch(patch: Tiles, n: Int, top: Float, w: Float, bottom: Float, p: MaskPaints) {
     save()
     clipRect(0f, top, w, bottom)
@@ -121,8 +119,7 @@ private fun Canvas.drawPatch(patch: Tiles, n: Int, top: Float, w: Float, bottom:
     restore()
 }
 
-/** [l] without what [sel] selects (canvas px): on whole px, on a soft edge by its coverage; in the patch where it has a tile, else in the mask (pixels only).
-All of it → an empty layer. Returns the layer and its new rasters */
+/** [l] without what [sel] selects: in the patch where it has a tile, else in the mask. All of it → an empty layer. Returns the layer and its new rasters */
 fun cleared(l: Layer, mask: LayerMask?, patch: Tiles?, sel: Selection, maskId: String, patchId: String): Pair<Layer, List<Tiles>> {
     if (l.region().apply { op(sel.core, Region.Op.DIFFERENCE) }.isEmpty) return Layer() to emptyList()
     val w = l.fileW
@@ -144,12 +141,11 @@ fun cleared(l: Layer, mask: LayerMask?, patch: Tiles?, sel: Selection, maskId: S
         else for (k in rects.indices step 4) drawRect(rects[k].toFloat(), rects[k + 1].toFloat(), rects[k + 2].toFloat(), rects[k + 3].toFloat(), paint)
     }
     val m = if (toMask.none { it }) mask else mask.edited(maskId, w, h, toMask) { old, x, y -> tileDrawn(old, ::blankMaskTile, x, y, w, h) { it.fill(erase) } }
-    // A patch's tile is always there to copy
     val p = if (toPatch.none { it }) patch else patch.edited(patchId, w, h, toPatch) { old, x, y -> tileDrawn(old, { patchTile(null) }, x, y, w, h) { it.fill(cut) } }
     return l.copy(mask = m?.id, patch = p?.id) to listOfNotNull(m?.takeIf { it !== mask }, p?.takeIf { it !== patch })
 }
 
-/** Carried by [t] like the layer's pixels (ContentTransform.render). Its edge goes on past the content: the pixels' anti-aliased rim is erased as the edge is */
+/** Carried like the pixels (ContentTransform.render); its edge goes past the content, so the AA rim is erased too */
 fun LayerMask.transformed(id: String, t: ContentTransform, rect: Rect, orient: Int): LayerMask? {
     val e = createBitmap(w, h, Bitmap.Config.ALPHA_8)
     val out = try {

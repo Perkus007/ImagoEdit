@@ -21,14 +21,13 @@ import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.theme.BtnGray
 import com.perkus.imagoedit.ui.theme.SmallShape
 
-/** Angle and opacity are read ONLY in their fields → during gestures only that row recomposes (and only when expanded) */
+/** Angle and opacity are read ONLY in their fields: gestures recompose only that row */
 @Composable
 fun MoveOverlay(s: MoveState, onCancel: () -> Unit, onConfirm: () -> Unit) = Box(Modifier.fillMaxSize()) {
     if (s.precise) Nudges(s, if (s.expanded) 2 else 1)
     FramePanel(s, Modifier.align(Alignment.BottomCenter), extra = { PlaceButtons(s) }, extraFields = { TurnFields(s) }, onCancel = onCancel, onConfirm = onConfirm)
 }
 
-/** Flips and the per-pixel nudge mode */
 @Composable
 fun PlaceButtons(s: PlaceState<*>) {
     ToolBtn(AppIcons.Inversion, rotation = { 90f }) { s.flipH() }
@@ -36,7 +35,6 @@ fun PlaceButtons(s: PlaceState<*>) {
     ToggleBtn(AppIcons.Arrows, s.precise) { s.precise = !s.precise }
 }
 
-/** Angle and opacity */
 @Composable
 fun TurnFields(s: PlaceState<*>) {
     AngleField(s)
@@ -46,7 +44,7 @@ fun TurnFields(s: PlaceState<*>) {
 @Composable
 fun AngleField(s: PlaceState<*>) = PanelField(s.t.angle, { FieldIcon(AppIcons.Angle) }, "°") { s.setField(FrameField.ANGLE, it) }
 
-/** The bottom one above the tool's panel, [rows] of BAR_H */
+/** Above the tool's panel, [rows] of BAR_H */
 @Composable
 fun Nudges(s: PlaceState<*>, rows: Int) = Box(Modifier.fillMaxSize().padding(4.dp)) {
     Nudge(128.dp, 32.dp, 0f, Modifier.align(Alignment.TopCenter)) { s.nudge(0f, -1f) }
