@@ -7,7 +7,7 @@ A layer-based raster image editor for Android.
 It works fully offline: no ads, no analytics, no internet permission.
 
 - Up to 100 MP canvases, 16 000 px per side.
-- Layers, selections, drawing, clone stamp, healing brush, eraser, blur brush, text.
+- Layers, selections, drawing, clone stamp, healing brush, eraser, blur brush, text, opacity transition.
 - Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders.
 - Projects live in folder on the device and stay there when the app is uninstalled.
 - Project autosave.
@@ -88,6 +88,11 @@ It works fully offline: no ads, no analytics, no internet permission.
 - Fill the selection (or the whole layer) with a color.
 - Stroke the selection outline, outside, centered or inside it.
   Square and polygon outlines keep sharp corners.
+
+### Transition
+- Fades the layer's opacity: **Linear** between two points, or **Radial** from the center of a circle or ellipse to its edge.
+- Opacity of each end 0–100 %, invert, snapping to the canvas center, middle lines, corners and side midpoints.
+- Separate Undo/Redo inside the tool.
 
 ### Canvas
 - **Frame**: crop the canvas; with a selection the frame starts at its bounds.
