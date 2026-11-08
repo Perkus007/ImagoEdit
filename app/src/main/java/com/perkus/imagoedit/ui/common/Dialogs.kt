@@ -200,9 +200,9 @@ fun DialogButton(text: String, color: Color, modifier: Modifier = Modifier, enab
 ) { Text(text, fontSize = 14.sp, lineHeight = 16.sp, textAlign = TextAlign.Center) }
 
 @Composable
-fun OkCancel(onCancel: () -> Unit, okColor: Color = BtnGreen, cancelColor: Color = BtnGray, okEnabled: Boolean = true, onOk: () -> Unit) = ButtonRow {
+fun OkCancel(onCancel: () -> Unit, okColor: Color = BtnGreen, cancelColor: Color = BtnGray, okEnabled: Boolean = true, okText: String = stringResource(R.string.ok), onOk: () -> Unit) = ButtonRow {
     DialogButton(stringResource(R.string.cancel), cancelColor, Modifier.weight(1f), onClick = onCancel)
-    DialogButton(stringResource(R.string.ok), okColor, Modifier.weight(1f), okEnabled, onOk)
+    DialogButton(okText, okColor, Modifier.weight(1f), okEnabled, onOk)
 }
 
 /** Back and outside taps don't dismiss: discarding work takes an explicit answer */

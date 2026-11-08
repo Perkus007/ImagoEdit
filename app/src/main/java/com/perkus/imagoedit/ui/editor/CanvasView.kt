@@ -87,7 +87,15 @@ class Viewport {
     fun refit(canvasW: Int, canvasH: Int) {
         fit = minOf(area.width / canvasW, area.height / canvasH).coerceAtLeast(MIN_SCALE)
         scale = fit
-        offset = area.center - Offset(canvasW.toFloat(), canvasH.toFloat()) * (fit / 2)
+        offset = Offset(centered(area.left, area.width, canvasW * fit), centered(area.top, area.height, canvasH * fit))
+    }
+
+    /** Start of [len] centered in [room] from [from], both ends ≥ ¼ px off screen px centers: an edge on a center is a tie the screen and an offscreen layer
+    (a stroke's, drawMasked) may break apart — a 1 px line */
+    private fun centered(from: Float, room: Float, len: Float): Float {
+        val f = len - floor(len)
+        val a = if (f <= 0.5f) -f / 2 else (1 - f) / 2
+        return (from + (room - len) / 2 - a).roundToInt() + a
     }
 
     fun pinch(zoom: Float, centroid: Offset, pan: Offset) {

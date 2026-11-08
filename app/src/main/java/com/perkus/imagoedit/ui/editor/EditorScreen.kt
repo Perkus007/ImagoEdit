@@ -174,18 +174,18 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         transform = null
     }
 
-    /** Shown if hidden, as Move. Without a selection the stroke follows the layer's pixels: scanned first */
+    /** Shown if hidden, as Move. Without a selection the stroke follows the layer's pixels: scanned first; an empty layer has none (0×0: not scannable) */
     fun openFill() {
         val l = targetLayer ?: return
         if (!l.visible) vm.toggleVisible(target)
         val sel = project.selection
-        if (sel != null) fill = FillTool(l, options.fill, project.width, project.height, sel)
+        if (sel != null || !l.hasImage) fill = FillTool(l, options.fill, project.width, project.height, sel)
         else vm.layerPixels(target) { fill = FillTool(l, options.fill, project.width, project.height, null, it) }
     }
 
-    /** Shown if hidden, as Move; only a layer with an image */
+    /** Shown if hidden, as Move */
     fun openTransition() {
-        val l = targetLayer?.takeIf { it.hasImage } ?: return
+        val l = targetLayer ?: return
         if (!l.visible) vm.toggleVisible(target)
         transition = TransitionTool(l, options.transition, project.width, project.height, project.selection) { popup != null }
     }
@@ -235,6 +235,9 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         }
     }
 
+    /** Transition — only on a layer with an image */
+    fun canTools3(a: Tools3Action) = a != Tools3Action.Transition || vm.canCopy(target)
+
     fun tools3Action(a: Tools3Action) {
         when (a) {
             Tools3Action.Frame -> { popup = null; crop = CropState(project.width, project.height, project.selection?.region?.bounds) }
@@ -278,7 +281,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
                 ActionMenuBtn(ToolPopup.Edit, AppIcons.CutSquare, EditAction.entries, popup?.kind, ::canEdit, ::edit) { popup = it }
                 ActionMenuBtn(ToolPopup.Selection, AppIcons.DottedLine, SelectAction.entries, popup?.kind, ::canSelect, ::selectAction) { popup = it }
                 Spacer(Modifier.weight(1f))
-                ActionMenuBtn(ToolPopup.Tools3, AppIcons.Menu, Tools3Action.entries, popup?.kind, enabled = { true }, onAction = ::tools3Action) { popup = it }
+                ActionMenuBtn(ToolPopup.Tools3, AppIcons.Menu, Tools3Action.entries, popup?.kind, ::canTools3, ::tools3Action) { popup = it }
                 IconBtn(AppIcons.Move) {
                     if (targetLayer?.hasImage == true && (project.selection != null || box != null)) {
                         if (!project.layers[target].visible) vm.toggleVisible(target)

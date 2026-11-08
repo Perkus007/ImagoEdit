@@ -67,23 +67,23 @@ class FillOptions(settings: AppSettings) {
     }
 }
 
-/** Fill/Stroke on layer [l]: Fill — what [sel] selects (null — the canvas), Stroke — its outline (null — the layer's [pixels]' outline). Previewed live (drawPreview),
-✓ paints it as a brush stroke, the layer grows to hold it (Stroke.room) */
+/** Fill/Stroke on layer [l]: Fill — what [sel] selects (null — the canvas), Stroke — its outline (null — the layer's [pixels]' outline, none — the canvas's).
+Previewed live (drawPreview), ✓ paints it as a brush stroke, the layer grows to hold it (Stroke.room) */
 @Stable
 class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val sel: Selection?, pixels: Selection? = null) {
     val layer = l.id
     private val file = l.file
     private val canvas = Rect(0, 0, cw, ch).asPath()
     private val filled = Figure(sel?.outline ?: canvas) // the preview's fill, a soft edge aside
-    private val outline = sel?.let { it.drawn ?: it.outline } ?: pixels?.outline
-    // Corners as growing keeps them: a drawn shape's and a one-rect layer's sharp, px-made ones round
-    private val sharp = sel?.let { it.drawn != null } ?: (pixels?.region?.isRect == true)
-    private val paint = Paint().apply { isAntiAlias = true }
+    private val outline = sel?.let { it.drawn ?: it.outline } ?: pixels?.outline ?: canvas
+    // Corners as growing keeps them: a drawn shape's, a one-rect layer's and the canvas's sharp, px-made ones round
+    private val sharp = sel?.let { it.drawn != null } ?: (pixels?.region?.isRect != false)
+    private val paint = Paint()
 
     private val fill get() = options.mode.value == FillMode.Fill
 
-    /** null — 0 px wide or no outline */
-    private val stroked by derivedStateOf { options.width.value.takeIf { it > 0 }?.let { w -> outline?.let { Figure(it, options.side.value, w.toFloat(), sharp) } } }
+    /** null — 0 px wide */
+    private val stroked by derivedStateOf { options.width.value.takeIf { it > 0 }?.let { Figure(outline, options.side.value, it.toFloat(), sharp) } }
 
     /** null — nothing. A fill covers the canvas, the selection limits it */
     fun stroke(): Stroke? = (if (fill) Figure(canvas) else stroked)?.let { Stroke(layer, file, options.color.value.toArgb(), area = sel.takeIf { fill }, figure = it) }
@@ -98,6 +98,8 @@ class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val
         c.clipRect(0, 0, cw, ch)
         paint.color = options.color.value.toArgb()
         paint.alpha = (alpha * 255).roundToInt()
+        // A fill's edges are whole px, shown unsmoothed as layers and checker are: AA would let them through along the canvas edge
+        paint.isAntiAlias = !fill
         if (f != null) f.draw(c, paint) else s.draw(c, paint)
         c.restore()
     }

@@ -2,6 +2,7 @@
 <resources>
     <string name="cancel">Скасувати</string>
     <string name="ok">OK</string>
+    <string name="ok_count">OK (%1$d)</string>
     <string name="exit_save_title">Зберегти проект?</string>
     <string name="exit_save">Зберегти та вийти</string>
     <string name="exit_save_copy">Зберегти копію та вийти</string>
@@ -32,7 +33,7 @@
     <string name="min_sdk_avif_decode">⚠️ Android 11: «ImageDecoder» не вміє читати AVIF. Фото в AVIF із галереї на Android 11 не імпортується. Експорт в AVIF працює, але відкрити такий файл назад у застосунку не можна. На Android 12+ усе норм.</string>
     <string name="export_warn_avif">⚠️ Експорт AVIF вище 4К може не відкриватися на деяких смартфонах.</string>
     <string name="export_warn_memory">⚠️ Що вища роздільна здатність експорту, то більше потрібно оперативної пам’яті. Якщо її не вистачить, експорт завершиться помилкою або застосунок закриється.</string>
-    <string name="last_export">Останній експортований файл:</string>
+    <string name="last_export">Останні експортовані файли:</string>
     <string name="export_path">Шлях: %1$s</string>
     <string name="info_title">Інформація</string>
     <string name="add_layer">Додати шар</string>

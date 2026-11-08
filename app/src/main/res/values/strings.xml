@@ -2,6 +2,7 @@
     <string name="app_name">Imago Edit</string>
     <string name="cancel">Cancel</string>
     <string name="ok">OK</string>
+    <string name="ok_count">OK (%1$d)</string>
     <string name="exit_save_title">Save project?</string>
     <string name="exit_save">Save and exit</string>
     <string name="exit_save_copy">Save a copy and exit</string>
@@ -32,7 +33,7 @@
     <string name="min_sdk_avif_decode">⚠️ Android 11: «ImageDecoder» cannot read AVIF. AVIF photos from the gallery cannot be imported on Android 11. Exporting to AVIF works, but opening such a file back in the app is not possible. On Android 12+, everything works fine.</string>
     <string name="export_warn_avif">⚠️ AVIF exports with a resolution higher than 4K may fail to open on some smartphones.</string>
     <string name="export_warn_memory">⚠️ The higher the export resolution, the more RAM it needs. If memory runs out, the export ends with an error or the app closes.</string>
-    <string name="last_export">Last exported file:</string>
+    <string name="last_export">Last exported files:</string>
     <string name="export_path">Path: %1$s</string>
     <string name="info_title">Information</string>
     <string name="add_layer">Add layer</string>

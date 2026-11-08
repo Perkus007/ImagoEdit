@@ -71,15 +71,17 @@ import java.io.File
 
 private const val EXPORT_COLS = 2 // колонок под панелью экспорта
 
+private fun Set<Long>.toggled(id: Long) = if (id in this) this - id else this + id
+
 @Composable
 fun MainMenuScreen(vm: AppViewModel) {
     var showNew by remember { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<Project?>(null) }
     var selected by remember { mutableStateOf<Set<Long>?>(null) } // null — normal, Set — delete mode
     var exporting by remember { mutableStateOf(false) }
-    var exportId by remember { mutableStateOf<Long?>(null) }
+    var exportIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var exportSettings by remember { mutableStateOf(ExportSettings()) }
-    var lastExport by remember { mutableStateOf<File?>(null) }
+    var exported by remember { mutableStateOf(emptyList<File>()) }
     var showSettings by rememberSaveable { mutableStateOf(false) } // survives recreation (language change)
     val appContext = LocalContext.current.applicationContext // export may outlive the Activity
     val checker = rememberCheckerBrush(4.dp)
@@ -101,7 +103,7 @@ fun MainMenuScreen(vm: AppViewModel) {
             AppTitle(Modifier.weight(1f))
             IconBtn(AppIcons.Add, idle) { showNew = true }
             IconBtn(AppIcons.AddImage, idle, pickImage)
-            IconBtn(AppIcons.FileUp, idle) { exportId = null; exporting = true }
+            IconBtn(AppIcons.FileUp, idle) { exportIds = emptySet(); exporting = true }
             IconBtn(AppIcons.Delete, idle) { selected = emptySet() }
         }
 
@@ -114,20 +116,20 @@ fun MainMenuScreen(vm: AppViewModel) {
             LazyVerticalGrid(
                 GridCells.Fixed(gridCols), Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp, 16.dp, with(density) { (w - gridCols * step).toDp() }, if (selected == null) 16.dp else 140.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), overscrollEffect = null
             ) {
                 items(vm.projects, key = { it.id }) { p ->
                     val frame = when {
                         selected?.contains(p.id) == true -> BtnRed
-                        exporting && exportId == p.id -> BtnGreen
+                        exporting && p.id in exportIds -> BtnGreen
                         else -> null
                     }
                     ProjectTile(p, checker, vm, frame, onClick = {
                         val s = selected
                         when {
-                            exporting -> if (!vm.busy) exportId = p.id
+                            exporting -> if (!vm.busy) exportIds = exportIds.toggled(p.id)
                             s == null -> vm.open(p)
-                            else -> selected = if (p.id in s) s - p.id else s + p.id
+                            else -> selected = s.toggled(p.id)
                         }
                     },
                         onRename = { if (selected == null) renaming = p }
@@ -145,14 +147,14 @@ fun MainMenuScreen(vm: AppViewModel) {
         }
 
         if (exporting && vm.hasAccess) {
-            val project = vm.projects.firstOrNull { it.id == exportId }
+            val chosen = vm.projects.filter { it.id in exportIds }
             ExportPanel(
-                exportSettings, busy = vm.busy, project = project, last = lastExport,
+                exportSettings, busy = vm.busy, count = chosen.size, files = exported,
                 onChange = { exportSettings = it },
                 onCancel = { exporting = false },
-                onExport = { project?.let { vm.export(appContext, it, exportSettings) { f -> lastExport = f } } },
+                onExport = { vm.export(appContext, chosen, exportSettings) { f -> exported = listOf(f) + exported } },
                 modifier = Modifier.align(Alignment.CenterEnd)
-                    .padding(top = 16.dp, end = with(density) { (w - cols * step).toDp() }, bottom = 16.dp)
+                    .padding(end = with(density) { (w - cols * step).toDp() })
                     .width(with(density) { (minOf(EXPORT_COLS, cols) * step - gap).toDp() })
             )
         }

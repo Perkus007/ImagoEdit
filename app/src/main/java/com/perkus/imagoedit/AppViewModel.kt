@@ -218,12 +218,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun cachedThumb(p: Project): ImageBitmap? = thumbs[p.thumbKey]
     suspend fun thumb(p: Project): ImageBitmap? = cachedThumb(p) ?: withContext(io) { store.loadThumb(p.id)?.asImageBitmap() }?.also { thumbs.put(p.thumbKey, it) }
 
-    fun export(ctx: Context, p: Project, s: ExportSettings, onDone: (File) -> Unit) {
-        runBusy(Dispatchers.IO, "export", { store.exportImage(ctx.applicationContext, p, s) }) { f ->
-            Feedback.done()
-            onDone(f)
-        }
-    }
+    /** One by one in [ps] order, [onFile] on the main thread after each; a failure stops the rest */
+    fun export(ctx: Context, ps: List<Project>, s: ExportSettings, onFile: (File) -> Unit) =
+        runBusy(Dispatchers.IO, "export", { ps.forEach { p -> store.exportImage(ctx.applicationContext, p, s).let { f -> viewModelScope.launch { onFile(f) } } } }) { Feedback.done() }
 
     fun dismissError() { error = null }
 
