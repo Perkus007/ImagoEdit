@@ -150,6 +150,9 @@ Images over the canvas limits can be scaled down proportionally on import: the a
 ## Download
 Get the APK from [Releases](../../releases).
 
+The app also has a topic on [4PDA](https://4pda.to/forum/index.php?showtopic=1129270) (in Russian) with the APK and a discussion.
+The topic is run by the author, **Perkus007** on 4PDA.
+
 ## Where files are stored
 ```
 Internal storage/
@@ -229,7 +232,8 @@ Stack: Kotlin, Jetpack Compose (Material 3), C via JNI. Third-party libraries ar
 the native ones are downloaded at build time with a pinned version and checksum.
 
 ## Contributing
-Bug reports and pull requests are welcome in [Issues](../../issues). By contributing you agree that
+Bug reports and pull requests are welcome in [Issues](../../issues). Bug reports in Russian can also go to the
+[4PDA topic](https://4pda.to/forum/index.php?showtopic=1129270). By contributing you agree that
 your contributions are licensed under GPL-3.0-or-later.
 
 When adding strings, add them in all three languages: `values/`, `values-ru/` and `values-uk/`.
