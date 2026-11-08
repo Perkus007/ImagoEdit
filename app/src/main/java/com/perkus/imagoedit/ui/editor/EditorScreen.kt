@@ -43,6 +43,7 @@ import com.perkus.imagoedit.data.EnumOption
 import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.data.Layer
 import com.perkus.imagoedit.data.Project
+import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.allSelected
 import com.perkus.imagoedit.data.contentBox
 import com.perkus.imagoedit.data.fileH
@@ -101,6 +102,8 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     var text by remember { mutableStateOf<TextState?>(null) }
     var transform by remember { mutableStateOf<TransformState?>(null) }
     var fill by remember { mutableStateOf<FillTool?>(null) }
+    var transition by remember { mutableStateOf<TransitionTool?>(null) }
+    var applying by remember { mutableStateOf(false) } // Fill/Stroke or Transition being baked
     val pickImage = rememberImagePicker(vm::addImage)
     val scope = rememberCoroutineScope()
     val placeholder = stringResource(R.string.text)
@@ -157,7 +160,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         scope.launch {
             val fonts = withContext(Dispatchers.IO) { loadFonts(context) }
             val p = vm.editing ?: return@launch
-            if (text == null && move == null && crop == null && transform == null) text = TextState(p.active + 1, newLayerId(), p.width, p.height, options.text, fonts, placeholder) { popup != null }
+            if (text == null && move == null && crop == null && transform == null && fill == null && transition == null) text = TextState(p.active + 1, newLayerId(), p.width, p.height, options.text, fonts, placeholder) { popup != null }
         }
     }
 
@@ -178,6 +181,20 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         val sel = project.selection
         if (sel != null) fill = FillTool(l, options.fill, project.width, project.height, sel)
         else vm.layerPixels(target) { fill = FillTool(l, options.fill, project.width, project.height, null, it) }
+    }
+
+    /** Shown if hidden, as Move; only a layer with an image */
+    fun openTransition() {
+        val l = targetLayer?.takeIf { it.hasImage } ?: return
+        if (!l.visible) vm.toggleVisible(target)
+        transition = TransitionTool(l, options.transition, project.width, project.height, project.selection) { popup != null }
+    }
+
+    /** Baked as a brush stroke, the tool open under the indicator until then; nothing to paint — closes */
+    fun bake(st: Stroke?, close: () -> Unit) {
+        if (st == null) return close()
+        applying = true
+        vm.stroke(st) { applying = false; close() }
     }
 
     fun requestExit() { if (vm.dirty || vm.baking > 0) dialog = EditorDialog.Exit else vm.closeEditor(false) } // a baking stroke is a change too
@@ -225,7 +242,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
             Tools3Action.Rotation -> { popup = null; dialog = EditorDialog.RotateCanvas }
             Tools3Action.Text -> { popup = null; openText() }
             Tools3Action.FillStroke -> { popup = null; openFill() }
-            else -> Unit
+            Tools3Action.Transition -> { popup = null; openTransition() }
         }
     }
 
@@ -235,13 +252,14 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     BackHandler(crop != null) { if (!busy) crop = null }
     BackHandler(text != null) { if (!busy) closeText() }
     BackHandler(transform != null) { if (!busy) closeTransform() }
-    BackHandler(fill != null) { if (fill?.applying == false) fill = null }
+    BackHandler(fill != null) { if (!applying) fill = null }
+    BackHandler(transition != null) { if (!applying) transition = null }
     BackHandler(layerMenu != null) { layerMenu = null }
     BackHandler(popup != null) { popup = null }
 
     Box(Modifier.fillMaxSize()) {
         // The canvas is always fullscreen under the panels: zoom and position survive tools
-        val frame: FrameState<*>? = move ?: crop ?: text ?: transform
+        val frame: CanvasTool<*>? = move ?: crop ?: text ?: transform ?: transition
         val hidden = frame != null || fill != null // a tool with its own panel
         val selecting = tool.value == Tool.Selection && !hidden
         CanvasView(picture, frame, select.takeIf { selecting },
@@ -314,13 +332,9 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
                 if (s.changed) s.edge.let { e -> vm.transformSelection(e.grow, e.blur, e.smooth, s.src, s.t, ::closeTransform) } else closeTransform()
             }
         }
-        // Likewise until baked as a brush stroke; nothing to paint — closes
-        fill?.let { s ->
-            FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) {
-                val st = s.stroke()
-                if (st == null) fill = null else { s.applying = true; vm.stroke(st) { fill = null } }
-            }
-        }
+        // Likewise until baked as a brush stroke
+        fill?.let { s -> FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) { bake(s.stroke()) { fill = null } } }
+        transition?.let { s -> TransitionOverlay(s, { popup = it }, { transition = null }) { bake(s.stroke()) { transition = null } } }
         // Popovers' press-outside layer, permanent (see dismissOnPress)
         Box(Modifier.fillMaxSize().dismissOnPress { layerMenu = null; popup = null })
         layerMenu?.let { anchor ->
@@ -329,7 +343,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         }
         ToolPopover(popup) { popup = null }
 
-        if (busy || fill?.applying == true) BusyOverlay()
+        if (busy || applying) BusyOverlay()
     }
 
     dialog?.let { d ->

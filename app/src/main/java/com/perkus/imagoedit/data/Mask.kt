@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Region
 import androidx.core.graphics.createBitmap
+import kotlin.math.floor
 
 const val MASK = "mask"
 private const val MASK_BAND = 256 // px: программная сборка идёт полосами — offscreen размером с полосу
@@ -102,13 +103,25 @@ fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Til
     }
 }
 
-/** [into] (software) gets the layer from px ([x], [y]) at [k] px per file px, transparent past it; k = 1 — an exact copy */
+/** [into] (software) gets the layer from px ([x], [y]) at [k] px per file px, transparent past it; k = 1 — an exact copy.
+The px its edge cuts (the last of ceil(w·k), ceil(h·k)) get the edge, as from a clamped texture: by the pixel-center rule they'd stay empty — drawn with the layer shifted
+to end on their far side */
 fun Canvas.composite(into: Bitmap, x: Int, y: Int, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, p: MaskPaints, k: Float = 1f) {
     into.eraseColor(Color.TRANSPARENT)
     setBitmap(into)
     translate(-x.toFloat(), -y.toFloat())
-    scale(k, k)
-    drawMasked(bmp, w, h, mask, patch, k, 255, k != 1f, p)
+    val ex = w * k
+    val ey = h * k
+    val fx = floor(ex)
+    val fy = floor(ey)
+    for (cutX in 0..(if (fx < ex) 1 else 0)) for (cutY in 0..(if (fy < ey) 1 else 0)) {
+        save()
+        clipRect(cutX * fx, cutY * fy, fx + cutX, fy + cutY)
+        translate(cutX * (fx + 1 - ex), cutY * (fy + 1 - ey))
+        scale(k, k)
+        drawMasked(bmp, w, h, mask, patch, k, 255, k != 1f, p)
+        restore()
+    }
 }
 
 /** Clipped to the layer: edge tiles' padding stays unseen */
@@ -140,8 +153,8 @@ fun cleared(l: Layer, mask: LayerMask?, patch: Tiles?, sel: Selection, maskId: S
         if (f != null) { concat(toFile); f.draw(this, paint) }
         else for (k in rects.indices step 4) drawRect(rects[k].toFloat(), rects[k + 1].toFloat(), rects[k + 2].toFloat(), rects[k + 3].toFloat(), paint)
     }
-    val m = if (toMask.none { it }) mask else mask.edited(maskId, w, h, toMask) { old, x, y -> tileDrawn(old, ::blankMaskTile, x, y, w, h) { it.fill(erase) } }
-    val p = if (toPatch.none { it }) patch else patch.edited(patchId, w, h, toPatch) { old, x, y -> tileDrawn(old, { patchTile(null) }, x, y, w, h) { it.fill(cut) } }
+    val m = if (toMask.none { it }) mask else mask.edited(maskId, w, h, toMask) { _, old, x, y -> tileDrawn(old, ::blankMaskTile, x, y, w, h) { it.fill(erase) } }
+    val p = if (toPatch.none { it }) patch else patch.edited(patchId, w, h, toPatch) { _, old, x, y -> tileDrawn(old, { patchTile(null) }, x, y, w, h) { it.fill(cut) } }
     return l.copy(mask = m?.id, patch = p?.id) to listOfNotNull(m?.takeIf { it !== mask }, p?.takeIf { it !== patch })
 }
 

@@ -17,10 +17,8 @@ private const val FULL = 255 * 255 // покрытие × непрозрачно
 
 /** A healing stroke's coverage [cover] ([stride] B a row) and healed px [px] (premultiplied RGBA) over [box], file px */
 internal class Healed(private val box: Rect, private val cover: ByteArray, private val stride: Int, private val px: ByteArray) {
-    private val raw = ByteArray(TILE * TILE * 4)
-
-    /** Patch tile [t] at ([x0], [y0]) toward the healed px by coverage × [opacity] (0..255) */
-    fun into(t: Bitmap, x0: Int, y0: Int, opacity: Int) {
+    /** Patch tile [t] at ([x0], [y0]) toward the healed px by coverage × [opacity] (0..255); [raw] — the calling thread's TILE² px */
+    fun into(t: Bitmap, x0: Int, y0: Int, opacity: Int, raw: ByteArray) {
         val left = maxOf(x0, box.left)
         val top = maxOf(y0, box.top)
         val right = minOf(x0 + TILE, box.right)

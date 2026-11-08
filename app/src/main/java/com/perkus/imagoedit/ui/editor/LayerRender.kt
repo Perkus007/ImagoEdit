@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import com.perkus.imagoedit.data.ContentTransform
 import com.perkus.imagoedit.data.Layer
 import com.perkus.imagoedit.data.LayerMask
+import com.perkus.imagoedit.data.MaskOverlay
 import com.perkus.imagoedit.data.MaskPaints
 import com.perkus.imagoedit.data.Tiles
 import com.perkus.imagoedit.data.drawMasked
@@ -89,13 +90,12 @@ private val paints = MaskPaints() // main thread only
 /** As the canvas draws a layer: an empty one as Layer.paintable (it may take a stroke) */
 class Drawn(val layer: Layer, val img: ImageBitmap?, val mask: LayerMask?, val patch: Tiles?)
 
-/** [t] is for the layer AFTER [orient]; clipped to the canvas as baking crops. Through drawMasked: an offscreen only with a mask, a patch over pixels or live [strokes].
-No AA (the edge follows the pixel grid, as baked) except turned plain pixels: a stair-stepped slanted edge would flicker while dragged.
-[detail] < 1 picks coarser copies: fewer texels to read */
+/** [t] is for the layer AFTER [orient]; clipped to the canvas as baking crops. Through drawMasked: an offscreen only with a mask, a patch over pixels or an [overlay]
+(live strokes, Transition's preview) for Layer.id [key]. No AA (the edge follows the pixel grid, as baked) except turned plain pixels: a stair-stepped slanted edge would
+flicker while dragged. [detail] < 1 picks coarser copies: fewer texels to read */
 fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransform, s: Float, canvasW: Int, canvasH: Int, levels: List<ImageBitmap>? = null, alpha: Float = 1f, orient: Int = 0,
-    mask: LayerMask? = null, patch: Tiles? = null, strokes: BrushTool? = null, key: Long = 0L, detail: Float = 1f) {
-    val live = strokes?.has(key) == true
-    if (img == null && patch == null && !live) return
+    mask: LayerMask? = null, patch: Tiles? = null, overlay: MaskOverlay? = null, key: Long = 0L, detail: Float = 1f) {
+    if (img == null && patch == null && overlay == null) return
     val b = t.box
     // Screen px per file px, from the visible part; sizes after orientation
     val ow = orientW(orient, fw, fh)
@@ -117,7 +117,7 @@ fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransfor
             paints.image.isAntiAlias = mask == null && patch == null && !t.axisAligned
             // A smaller copy is stretched over the file's px
             drawContext.canvas.nativeCanvas.drawMasked(img?.let { pickLevel(it, levels, k).asAndroidBitmap() }, fw, fh, mask, patch, k, (alpha * 255).roundToInt(), filtered(minOf(kx, ky)),
-                paints, strokes.takeIf { live }, key)
+                paints, overlay, key)
         }
     }
 }

@@ -35,7 +35,7 @@ FetchContent_Declare(webp
     URL_HASH SHA256=e4ab7009bf0629fd11982d4c2aa83964cf244cffba7347ecd39019a9e38c4564)
 FetchContent_MakeAvailable(webp)
 
-add_library(imagoedit SHARED encoders.c)
+add_library(imagoedit SHARED encoders.c kernels.c)
 add_dependencies(imagoedit jpeg_build)
 target_include_directories(imagoedit PRIVATE ${JPEG_DIR}/include)
-target_link_libraries(imagoedit PRIVATE ${JPEG_DIR}/lib/libjpeg.a libwebpmux webp jnigraphics)
+target_link_libraries(imagoedit PRIVATE ${JPEG_DIR}/lib/libjpeg.a libwebpmux webp jnigraphics m)

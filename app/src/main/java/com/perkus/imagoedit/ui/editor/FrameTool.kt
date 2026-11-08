@@ -26,7 +26,7 @@ const val MOVE = -1 // жест «перенос»; 0..7 — маркер раз
 const val IDLE = -2 // жест не трогает рамку
 const val DEG = 0.017453292f
 const val MAX_SIZE = 4f * MAX_SIDE // и предел X/Y
-private const val MAX_FRAME_STEPS = 100 // шаги Undo инструмента, только RAM
+private const val MAX_TOOL_STEPS = 100 // шаги Undo инструмента, только RAM
 
 private val HANDLE_HALF = 5.dp
 val HANDLE_LINE = 1.dp
@@ -48,7 +48,7 @@ private fun ContentTransform.at(sx: Float, sy: Float): Offset {
 
 fun ContentTransform.handle(i: Int) = at(DIR[2 * i].toFloat(), DIR[2 * i + 1].toFloat())
 
-private fun snapTo(v: Float, size: Float, thr: Float): Float {
+fun snapTo(v: Float, size: Float, thr: Float): Float {
     val edge = if (abs(v) <= abs(v - size)) 0f else size
     val p = if (abs(v - size / 2) < abs(v - edge)) size / 2 else edge
     return if (abs(v - p) <= thr) p else v
@@ -142,15 +142,10 @@ class FrameOptions(settings: AppSettings, tool: String) {
     val expanded = BoolOption(settings, "$tool.expanded", false)
 }
 
-/** A frame [t] on the [cw]×[ch] canvas: 8 handles, move, X/Y/W/H fields, the session's own Undo/Redo. [S] — a step (the whole state, compared by value);
-[min] — the least side; [inside] — an unrotated frame stays on the canvas, whole px */
+/** A tool with its own panel: canvas gestures (CanvasView), its overlay, snapping, the session's own Undo/Redo. [S] — a step (the whole state, compared by value) */
 @Stable
-abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initial: ContentTransform, free: Boolean, private val min: Float, private val inside: Boolean) {
-    var t by mutableStateOf(initial)
-        protected set
-    var free by mutableStateOf(free)
-    var snapOff by mutableStateOf(false)
-    var expanded by mutableStateOf(false)
+abstract class CanvasTool<S> {
+    abstract var snapOff: Boolean
 
     /** The whole state: Undo/Redo saves and restores it */
     protected abstract var step: S
@@ -161,18 +156,16 @@ abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initi
     val canUndo get() = past.isNotEmpty()
     val canRedo get() = future.isNotEmpty()
 
-    private var start = initial
     private var before: S? = null
-    private var p0 = Offset.Zero
-    private var mode = MOVE
-    private var scale = 1f
-    private var thr = 0f
+    protected var p0 = Offset.Zero // the touch, canvas px
+    protected var scale = 1f
+    protected var thr = 0f // snapping threshold, canvas px
 
     private fun record(before: S) {
         if (before == step) return
         future.clear()
         past.add(before)
-        if (past.size > MAX_FRAME_STEPS) past.removeAt(0)
+        if (past.size > MAX_TOOL_STEPS) past.removeAt(0)
     }
 
     /** One step */
@@ -182,8 +175,8 @@ abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initi
         record(before)
     }
 
-    /** Part of one under way (a slider drag): recorded by finish */
-    protected fun hold(change: () -> Unit) {
+    /** Part of one under way (a gesture, a slider drag): recorded by finish */
+    protected fun hold(change: () -> Unit = {}) {
         if (before == null) before = step
         change()
     }
@@ -198,6 +191,39 @@ abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initi
         step = s
     }
 
+    /** The gesture type is fixed by the touch; [down] — screen px from the canvas origin */
+    open fun begin(down: Offset, scale: Float, d: Density) {
+        hold()
+        p0 = down / scale
+        this.scale = scale
+        thr = with(d) { SNAP.toPx() } / scale
+    }
+
+    /** [p] — screen px from the canvas origin */
+    abstract fun drag(p: Offset)
+
+    /** One step per gesture */
+    open fun finish() {
+        before?.let { record(it) }
+        before = null
+    }
+
+    /** The canvas origin at (0, 0), [s] screen px per canvas px */
+    abstract fun DrawScope.drawOverlay(s: Float)
+}
+
+/** A frame [t] on the [cw]×[ch] canvas: 8 handles, move, X/Y/W/H fields. [min] — the least side; [inside] — an unrotated frame stays on the canvas, whole px */
+@Stable
+abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initial: ContentTransform, free: Boolean, private val min: Float, private val inside: Boolean) : CanvasTool<S>() {
+    var t by mutableStateOf(initial)
+        protected set
+    var free by mutableStateOf(free)
+    override var snapOff by mutableStateOf(false)
+    var expanded by mutableStateOf(false)
+
+    private var start = initial
+    private var mode = MOVE
+
     abstract fun setField(f: FrameField, v: Float)
 
     fun restore(o: FrameOptions) {
@@ -209,9 +235,6 @@ abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initi
         o.snapOff.value = snapOff
         o.expanded.value = expanded
     }
-
-    /** The canvas origin at (0, 0), [s] screen px per canvas px */
-    abstract fun DrawScope.drawOverlay(s: Float)
 
     protected fun limited(r: ContentTransform) = if (inside) r.inCanvas(cw, ch) else r
 
@@ -238,25 +261,14 @@ abstract class FrameState<S>(protected val cw: Int, protected val ch: Int, initi
         else resizedTo(start, mode, p + start.handle(mode) - p0, snap) // the handle keeps its grab offset
     }
 
-    /** The gesture type is fixed by the touch; [down] — screen px from the canvas origin */
-    fun begin(down: Offset, scale: Float, d: Density) {
+    override fun begin(down: Offset, scale: Float, d: Density) {
+        super.begin(down, scale, d)
         start = t
-        before = step
-        p0 = down / scale
         mode = hit(down, scale, d)
-        this.scale = scale
-        thr = with(d) { SNAP.toPx() } / scale
     }
 
-    /** [p] — screen px from the canvas origin */
-    fun drag(p: Offset) {
+    override fun drag(p: Offset) {
         if (mode != IDLE) t = dragged(mode, start, p0, p / scale, thr)
-    }
-
-    /** One step per gesture */
-    fun finish() {
-        before?.let { record(it) }
-        before = null
     }
 }
 

@@ -7,6 +7,8 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
+import androidx.compose.foundation.Indication
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -24,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -43,6 +46,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
@@ -72,6 +76,7 @@ import com.perkus.imagoedit.ui.theme.BtnGray
 import com.perkus.imagoedit.ui.theme.LightFieldBg
 import com.perkus.imagoedit.ui.theme.LightFieldBorder
 import com.perkus.imagoedit.ui.theme.SideBarBg
+import com.perkus.imagoedit.ui.theme.TranslucentGray
 import kotlin.math.roundToInt
 
 val SIDEBAR_W = 80.dp
@@ -82,6 +87,8 @@ private val GRADIENT_TRACK_H = 16.dp
 private val LABELED_SLIDER_W = 200.dp // одной длины во всех строках окна
 private val BUSY_SHADOW_OFFSET = 1.dp
 private val BUSY_SHADOW_BLUR = 2.dp
+const val DISABLED_ALPHA = 0.3f // неактивная кнопка и пункт меню
+private val ITEM_SHAPE = RoundedCornerShape(4.dp)
 
 @Composable
 fun Bar(modifier: Modifier = Modifier, arrangement: Arrangement.Horizontal = Arrangement.spacedBy(16.dp), content: @Composable RowScope.() -> Unit) = Row(modifier.fillMaxWidth().background(BarBg).height(BAR_H), arrangement, Alignment.CenterVertically, content = content)
@@ -108,6 +115,20 @@ fun MenuBtn(icon: ImageVector, active: Boolean, onClick: (anchor: Rect) -> Unit)
         Box(Modifier.trackBounds(bounds).then(if (active) Modifier.background(Color.White, CircleShape) else Modifier)) {
             IconBtn(icon) { onClick(bounds.rect) }
         }
+    }
+}
+
+/** A popover menu row. [indication] = null for one-shot actions; [lead] — 24dp, gets the text color */
+@Composable
+fun MenuItem(text: String, selected: Boolean = false, enabled: Boolean = true, indication: Indication? = LocalIndication.current, onClick: () -> Unit, lead: @Composable (Color) -> Unit) {
+    val color = Color.Black.copy(alpha = if (enabled) 1f else DISABLED_ALPHA)
+    Row(
+        Modifier.fillMaxWidth().clip(ITEM_SHAPE).then(if (selected) Modifier.background(TranslucentGray) else Modifier)
+            .clickable(interactionSource = null, indication = indication, enabled = enabled, onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+        Arrangement.spacedBy(8.dp), Alignment.CenterVertically
+    ) {
+        lead(color)
+        Text(text, color = color, fontSize = 14.sp, maxLines = 1)
     }
 }
 

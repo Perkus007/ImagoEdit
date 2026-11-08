@@ -11,12 +11,12 @@ android {
         applicationId = "com.perkus.imagoedit"
         minSdk = 30
         targetSdk = 37
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
     }
     externalNativeBuild {
         cmake {
-            path = file("src/main/cpp/CMakeLists.txt") // собственные кодировщики JPEG и WebP (libjpeg-turbo, libwebp)
+            path = file("src/main/cpp/CMakeLists.txt") // собственные кодировщики JPEG и WebP (libjpeg-turbo, libwebp), попиксельные циклы кистей
             version = "3.22.1"
         }
     }

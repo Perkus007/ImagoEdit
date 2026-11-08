@@ -34,6 +34,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
@@ -44,7 +45,9 @@ import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.AppSlider
 import com.perkus.imagoedit.ui.common.BAR_H
+import com.perkus.imagoedit.ui.common.DISABLED_ALPHA
 import com.perkus.imagoedit.ui.common.NumField
+import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.consumeTaps
 import com.perkus.imagoedit.ui.theme.BarBg
 import com.perkus.imagoedit.ui.theme.BtnGreen
@@ -54,7 +57,6 @@ import com.perkus.imagoedit.ui.theme.SmallShape
 import kotlin.math.roundToInt
 
 const val PANEL_ANIM_DURATION_MS = 300 // шеврон, ряды, уход и выезд панелей
-const val DISABLED_ALPHA = 0.3f // неактивная кнопка и пункт меню
 val PANEL_ANIM = tween<Float>(PANEL_ANIM_DURATION_MS)
 private val PANEL_RESIZE = tween<IntSize>(PANEL_ANIM_DURATION_MS)
 
@@ -121,6 +123,11 @@ fun FramePanel(s: FrameState<*>, modifier: Modifier, extra: @Composable RowScope
 @Composable
 fun FrameButtons(s: FrameState<*>) {
     ToolBtn(if (s.free) AppIcons.UnlinkVertical else AppIcons.LinkVertical) { s.free = !s.free }
+    SnapHistoryButtons(s)
+}
+
+@Composable
+fun SnapHistoryButtons(s: CanvasTool<*>) {
     ToolBtn(if (s.snapOff) AppIcons.MagnetOff else AppIcons.MagnetOn) { s.snapOff = !s.snapOff }
     ToolBtn(AppIcons.StepBack, enabled = s.canUndo) { Feedback.tap(); s.undo() }
     ToolBtn(AppIcons.StepForward, enabled = s.canRedo) { Feedback.tap(); s.redo() }
@@ -181,6 +188,14 @@ fun PxSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifie
         label()
         PanelField(value.toFloat(), {}, "px") { onApply(it.roundToInt()) }
         AppSlider(value, onChange, range, Modifier.weight(1f).height(32.dp), onFinished = onFinished)
+    }
+
+/** On a popover card over a panel: an equal share of the row, the label hugs its text */
+@Composable
+fun RowScope.PopoverSlider(label: AnnotatedString, value: Int, range: IntRange, suffix: String, onFinished: () -> Unit, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
+    Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
+        Text(label, fontSize = 14.sp, maxLines = 1)
+        SliderRow(value, range, suffix, onFinished = onFinished, onChange = onChange) { onApply(it.roundToInt()) }
     }
 
 @Composable

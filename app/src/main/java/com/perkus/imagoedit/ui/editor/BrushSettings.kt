@@ -19,9 +19,11 @@ import androidx.compose.ui.unit.dp
 import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
 import com.perkus.imagoedit.data.IntOption
+import com.perkus.imagoedit.data.tip
 import com.perkus.imagoedit.ui.common.AppIcons
 
 private val PREVIEW_H = 100.dp // в неё вписан круг наибольшего размера
+private const val PREVIEW_STOPS = 65 // стопы профиля кисти, как у даба
 private val previewPaint = android.graphics.Paint().apply { isAntiAlias = false } // Compose рисует только со сглаживанием
 
 /** name is part of the prefs key */
@@ -46,8 +48,9 @@ fun BrushSettings(b: BrushOptions, params: List<BrushParam> = b.params) = Column
     Box(Modifier.fillMaxWidth().height(PREVIEW_H).drawBehind {
         val r = size.height / 2 * b[BrushParam.Size].value / BrushParam.Size.range.last
         val hard = b[BrushParam.Hardness].value / 100f
-        val c = Color.Black.copy(alpha = b[BrushParam.Paint].value / 100f * b[BrushParam.Opacity].value / 100f).toArgb()
-        previewPaint.shader = RadialGradient(center.x, center.y, r, intArrayOf(c, c, Color.Transparent.toArgb()), floatArrayOf(0f, hard, 1f), Shader.TileMode.CLAMP)
+        val a = b[BrushParam.Paint].value / 100f * b[BrushParam.Opacity].value / 100f
+        previewPaint.shader = RadialGradient(center.x, center.y, r, IntArray(PREVIEW_STOPS) { Color.Black.copy(alpha = a * tip(it / (PREVIEW_STOPS - 1f), hard)).toArgb() }, null,
+            Shader.TileMode.CLAMP)
         drawContext.canvas.nativeCanvas.drawCircle(center.x, center.y, r, previewPaint)
     })
     params.forEach { ParamRow(stringResource(it.label), b[it], it.suffix) }

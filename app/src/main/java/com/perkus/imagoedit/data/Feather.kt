@@ -33,12 +33,11 @@ Immutable: moves and history share the alpha */
 class Feather(val alpha: Bitmap, val x: Int, val y: Int, val reach: Region, val core: Region, val radius: Int) {
     val bounds get() = Rect(x, y, x + alpha.width, y + alpha.height)
 
-    /** As alpha by [paint]'s blend mode. Skia's software canvas draws ALPHA_8 as coverage (DST_IN keeps everything): there a shader carries it */
+    /** As alpha by [paint]'s blend mode; [paint] isn't changed: threads may share it. Skia's software canvas draws ALPHA_8 as coverage (DST_IN keeps everything): there a shader carries it */
     fun draw(c: Canvas, paint: Paint) {
         if (c.isHardwareAccelerated) return c.drawBitmap(alpha, x.toFloat(), y.toFloat(), paint)
-        paint.shader = BitmapShader(alpha, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(Matrix().apply { setTranslate(x.toFloat(), y.toFloat()) }) }
-        c.drawRect(bounds, paint)
-        paint.shader = null
+        val s = BitmapShader(alpha, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { setLocalMatrix(Matrix().apply { setTranslate(x.toFloat(), y.toFloat()) }) }
+        c.drawRect(bounds, Paint(paint).apply { shader = s })
     }
 }
 

@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -66,7 +65,6 @@ import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.LocalFrame
 import com.perkus.imagoedit.ui.common.PopoverCard
-import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.TextInputDialog
 import com.perkus.imagoedit.ui.common.anchored
 import com.perkus.imagoedit.ui.common.consumeTaps
@@ -78,7 +76,6 @@ import com.perkus.imagoedit.ui.theme.ScreenBg
 import com.perkus.imagoedit.ui.theme.SmallShape
 import com.perkus.imagoedit.ui.theme.TranslucentGray
 import com.perkus.imagoedit.ui.theme.Yellow
-import kotlin.math.roundToInt
 
 private const val ROWS = 2 // пока третий свёрнут
 private val FIELD_H = 32.dp // = ToolBtn
@@ -179,17 +176,9 @@ private fun TypeBtn(s: TextState, open: Boolean, onPopup: (OpenPopup?) -> Unit) 
 private fun TypePopover(s: TextState) =
     PopoverCard(Modifier.fillMaxSize().padding(bottom = s.panelH() + GAP).wrapContentSize(Alignment.BottomCenter).consumeTaps().width(PANEL_W)) {
         Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
-            TypeSlider(SPACING_LABEL, s.content.spacing, s.options.spacing.range, "%", s::finish, s::slideSpacing, s::setSpacing)
-            s.content.font.weights?.let { r -> TypeSlider(WEIGHT_LABEL, s.weight, r, "", s::finish, s::slideWeight, s::setWeight) }
+            PopoverSlider(SPACING_LABEL, s.content.spacing, s.options.spacing.range, "%", s::finish, s::slideSpacing, s::setSpacing)
+            s.content.font.weights?.let { r -> PopoverSlider(WEIGHT_LABEL, s.weight, r, "", s::finish, s::slideWeight, s::setWeight) }
         }
-    }
-
-/** An equal share of the row: the label hugs its text */
-@Composable
-private fun RowScope.TypeSlider(label: AnnotatedString, value: Int, range: IntRange, suffix: String, onFinished: () -> Unit, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
-    Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
-        Text(label, fontSize = 14.sp, maxLines = 1)
-        SliderRow(value, range, suffix, onFinished = onFinished, onChange = onChange) { onApply(it.roundToInt()) }
     }
 
 /** The whole screen's height; slides by [shown] */

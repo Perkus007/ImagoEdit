@@ -11,6 +11,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
@@ -36,6 +37,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
@@ -60,11 +63,16 @@ import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.AppSwitch
 import com.perkus.imagoedit.ui.common.AppTitle
 import com.perkus.imagoedit.ui.common.Bar
-import com.perkus.imagoedit.ui.common.ButtonRow
 import com.perkus.imagoedit.ui.common.DialogButton
 import com.perkus.imagoedit.ui.common.IconBtn
+import com.perkus.imagoedit.ui.common.LocalFrame
+import com.perkus.imagoedit.ui.common.MenuItem
+import com.perkus.imagoedit.ui.common.Popover
+import com.perkus.imagoedit.ui.common.anchored
+import com.perkus.imagoedit.ui.common.dismissOnPress
+import com.perkus.imagoedit.ui.common.rememberBounds
+import com.perkus.imagoedit.ui.common.trackBounds
 import com.perkus.imagoedit.ui.theme.BtnGray
-import com.perkus.imagoedit.ui.theme.BtnGreen
 import com.perkus.imagoedit.ui.theme.LinkBlue
 import com.perkus.imagoedit.ui.theme.ScreenBg
 import com.perkus.imagoedit.ui.theme.SideBarBg
@@ -100,8 +108,8 @@ private val NOTICES = listOf(
 )
 private val NOTICES_W = 600.dp
 
-// Тег → название на самом языке; "en" — по умолчанию (values/)
-private val LANGUAGES = listOf("en" to "English", "ru" to "Русский", "uk" to "Українська")
+// Тег, флаг, название на самом языке; "en" — по умолчанию (values/)
+private val LANGUAGES = listOf(Triple("en", "🇬🇧", "English"), Triple("ru", "🇷🇺", "Русский"), Triple("uk", "🇺🇦", "Українська"))
 
 private val TICKER_W = 100.dp // адреса начинаются с одной линии
 private val LinkStyles = TextLinkStyles(SpanStyle(color = LinkBlue))
@@ -117,41 +125,56 @@ fun SettingsScreen(onClose: () -> Unit) {
     var sounds by remember { mutableStateOf(Feedback.sounds) }
     var showLicense by remember { mutableStateOf(false) }
     var showNotices by remember { mutableStateOf(false) }
-    val language = LocalConfiguration.current.locales[0].language.takeIf { c -> LANGUAGES.any { it.first == c } } ?: "en"
+    var languageMenu by remember { mutableStateOf<Rect?>(null) } // opener's bounds while open
+    val languageBounds = rememberBounds()
+    val language = LocalConfiguration.current.locales[0].language.let { c -> LANGUAGES.firstOrNull { it.first == c } } ?: LANGUAGES[0]
+    BackHandler(languageMenu != null) { languageMenu = null }
 
+    // Own Box: Surface's propagates min constraints, the popover would stretch to the screen
     Surface(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
-            Bar {
-                IconBtn(AppIcons.Cancel, onClick = onClose)
-                AppTitle(Modifier.weight(1f))
-            }
-            // No stretch overscroll: it resamples the layer, text pixels shift
-            Row(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState(), overscrollEffect = null).padding(16.dp), Arrangement.spacedBy(24.dp)) {
-                Column(Modifier.weight(1f), Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.app_info), fontSize = 14.sp)
-                    DONATIONS.forEach { (ticker, address) -> CoinRow(ticker, address) { context.copyToClipboard(ticker, address) } }
+        Box {
+            Column(Modifier.fillMaxSize()) {
+                Bar {
+                    IconBtn(AppIcons.Cancel, onClick = onClose)
+                    AppTitle(Modifier.weight(1f))
                 }
-                Column(Modifier.weight(1f), Arrangement.spacedBy(12.dp)) {
-                    Text(stringResource(R.string.language), fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                    ButtonRow {
-                        LANGUAGES.forEach { (code, name) ->
-                            DialogButton(name, if (code == language) BtnGreen else BtnGray, Modifier.weight(1f)) {
-                                // Applied on Activity creation (withAppLanguage)
-                                if (code != language) { settings.language = code; activity?.recreate() }
-                            }
+                // No stretch overscroll: it resamples the layer, text pixels shift
+                Row(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState(), overscrollEffect = null).padding(16.dp), Arrangement.spacedBy(24.dp)) {
+                    Column(Modifier.weight(1f), Arrangement.spacedBy(12.dp)) {
+                        Text(stringResource(R.string.app_info), fontSize = 14.sp)
+                        DONATIONS.forEach { (ticker, address) -> CoinRow(ticker, address) { context.copyToClipboard(ticker, address) } }
+                    }
+                    Column(Modifier.weight(1f), Arrangement.spacedBy(12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(stringResource(R.string.language), Modifier.weight(1f), fontSize = 16.sp)
+                            DialogButton("${language.second} ${language.third}", BtnGray, Modifier.trackBounds(languageBounds)) { languageMenu = languageBounds.rect }
+                        }
+                        HorizontalDivider()
+                        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                            SwitchRow(stringResource(R.string.vibration), vibration, Modifier.weight(1f)) { vibration = it; settings.vibration = it }
+                            SwitchRow(stringResource(R.string.sounds), sounds, Modifier.weight(1f)) { sounds = it; Feedback.sounds = it }
+                        }
+                        HorizontalDivider()
+                        Text("${stringResource(R.string.app_name)} ${BuildConfig.VERSION_NAME} · $COPYRIGHT", fontSize = 14.sp)
+                        LinkText(LinkAnnotation.Clickable("license", LinkStyles) { showLicense = true }, LICENSE_NAME, "${stringResource(R.string.license)} ")
+                        LinkText(LinkAnnotation.Clickable("notices", LinkStyles) { showNotices = true }, stringResource(R.string.third_party))
+                        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                            LinkText(LinkAnnotation.Url(GITHUB_URL, LinkStyles), "GitHub")
+                            LinkText(LinkAnnotation.Url(TELEGRAM_URL, LinkStyles), "Telegram")
                         }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        SwitchRow(stringResource(R.string.vibration), vibration, Modifier.weight(1f)) { vibration = it; settings.vibration = it }
-                        SwitchRow(stringResource(R.string.sounds), sounds, Modifier.weight(1f)) { sounds = it; Feedback.sounds = it }
-                    }
-                    HorizontalDivider()
-                    Text("${stringResource(R.string.app_name)} ${BuildConfig.VERSION_NAME} · $COPYRIGHT", fontSize = 14.sp)
-                    LinkText(LinkAnnotation.Clickable("license", LinkStyles) { showLicense = true }, LICENSE_NAME, "${stringResource(R.string.license)} ")
-                    LinkText(LinkAnnotation.Clickable("notices", LinkStyles) { showNotices = true }, stringResource(R.string.third_party))
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
-                        LinkText(LinkAnnotation.Url(GITHUB_URL, LinkStyles), "GitHub")
-                        LinkText(LinkAnnotation.Url(TELEGRAM_URL, LinkStyles), "Telegram")
+                }
+            }
+            // Popover's press-outside layer, permanent (see dismissOnPress)
+            Box(Modifier.fillMaxSize().dismissOnPress { languageMenu = null })
+            languageMenu?.let { anchor ->
+                Popover(anchor, Modifier.anchored(anchor, LocalFrame.current) { a, w, _ -> Offset(a.right - w, a.bottom + 4.dp.toPx()) }, { languageMenu = null }, Modifier.width(IntrinsicSize.Max)) {
+                    LANGUAGES.forEach { l ->
+                        MenuItem(l.third, l == language, onClick = {
+                            languageMenu = null
+                            // Applied on Activity creation (withAppLanguage)
+                            if (l != language) { settings.language = l.first; activity?.recreate() }
+                        }) { Text(l.second, fontSize = 20.sp) }
                     }
                 }
             }

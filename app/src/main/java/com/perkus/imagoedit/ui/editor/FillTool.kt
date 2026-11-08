@@ -12,9 +12,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.drawscope.DrawScope
@@ -70,7 +68,7 @@ class FillOptions(settings: AppSettings) {
 }
 
 /** Fill/Stroke on layer [l]: Fill — what [sel] selects (null — the canvas), Stroke — its outline (null — the layer's [pixels]' outline). Previewed live (drawPreview),
-✓ paints it as a brush stroke, the layer grows to hold it (Stroke.room). [applying] — being baked */
+✓ paints it as a brush stroke, the layer grows to hold it (Stroke.room) */
 @Stable
 class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val sel: Selection?, pixels: Selection? = null) {
     val layer = l.id
@@ -81,7 +79,6 @@ class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val
     // Corners as growing keeps them: a drawn shape's and a one-rect layer's sharp, px-made ones round
     private val sharp = sel?.let { it.drawn != null } ?: (pixels?.region?.isRect == true)
     private val paint = Paint().apply { isAntiAlias = true }
-    var applying by mutableStateOf(false)
 
     private val fill get() = options.mode.value == FillMode.Fill
 

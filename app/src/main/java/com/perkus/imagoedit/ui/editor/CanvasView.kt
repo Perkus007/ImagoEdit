@@ -122,18 +122,22 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
         }
     }
 
-    /** [tool]'s layer drawn with its transform (a text by the tool itself); [fill]'s gets its preview */
-    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: PlaceState<*>? = null, detail: Float = 1f, fill: FillTool? = null) {
+    /** A PlaceState [tool]'s layer drawn with its transform (a text by the tool itself), a TransitionTool's with its preview unless live strokes are on it;
+    [fill]'s gets its preview */
+    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: CanvasTool<*>? = null, detail: Float = 1f, fill: FillTool? = null) {
         val lv = levels.value
         val shown = layers.value
+        val place = tool as? PlaceState<*>
+        val transition = tool as? TransitionTool
         translate(offset.x, offset.y) {
             for (i in range) {
                 val d = shown[i]
                 val l = d.layer
-                val active = tool?.takeIf { l.id == it.id }
+                val active = place?.takeIf { l.id == it.id }
                 val alpha = active?.alpha ?: preview.alpha(l.id, l.opacity)
                 if (active is TextState) with(active) { drawLive(scale, canvasW, canvasH) }
-                else drawPlaced(d.img, l.fileW, l.fileH, active?.t ?: l.inPlace, scale, canvasW, canvasH, d.img?.let { lv[it.asAndroidBitmap()] }, alpha, l.orient, d.mask, d.patch, strokes, l.id, detail)
+                else drawPlaced(d.img, l.fileW, l.fileH, active?.t ?: l.inPlace, scale, canvasW, canvasH, d.img?.let { lv[it.asAndroidBitmap()] }, alpha, l.orient, d.mask, d.patch,
+                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer }, l.id, detail)
                 if (fill != null && l.id == fill.layer) with(fill) { drawPreview(alpha, scale, canvasW, canvasH) }
             }
         }
@@ -192,10 +196,10 @@ interface SelectionPreview {
     fun outline(s: Selection): Path?
 }
 
-/** [tool] — Move, Text, Crop or Selection transform while open; [select], [brush] — the active tool's gesture (both for the Selection brush); [selection] — drawn always,
+/** [tool] — Move, Text, Crop, Selection transform or Transition while open; [select], [brush] — the active tool's gesture (both for the Selection brush); [selection] — drawn always,
 as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open */
 @Composable
-fun CanvasView(picture: CanvasPicture, tool: FrameState<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, modifier: Modifier = Modifier) {
+fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val margin = with(density) { 24.dp.toPx() }
     // Bars overlay the canvas: fit is for the area between them
@@ -270,7 +274,7 @@ fun CanvasView(picture: CanvasPicture, tool: FrameState<*>?, select: SelectTool?
         // Each group its own layer: a stroke, move or opacity preview redraws the hot layer alone, the others stay Offscreen textures (not while zooming, nor empty)
         for (part in Part.entries) Spacer(Modifier.fillMaxSize()
             .graphicsLayer { if (part != Part.Hot) compositingStrategy = if (vp.zoomPct == 0 && !picture.range(part, hot).isEmpty()) CompositingStrategy.Offscreen else CompositingStrategy.Auto }
-            .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), move, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill) } })
+            .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill) } })
         // Offscreen: the cut-out stays in it
         if (preview != null) Spacer(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind {
             committed.value?.let { with(preview) { drawPreview(it, vp.offset, vp.scale, cw, ch) } }

@@ -16,6 +16,9 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.Deflater
 import java.util.zip.Inflater
 import kotlin.math.floor
@@ -23,6 +26,31 @@ import kotlin.math.floor
 const val TILE = 256 // px файла слоя: единица заливки в GPU, записи и шага Undo
 private const val HALF = TILE / 2
 private const val TILE_BYTES = TILE * TILE * 4
+
+/** Threads tiles are made on: one per core */
+internal val WORKERS = Runtime.getRuntime().availableProcessors()
+private val pool by lazy { Executors.newFixedThreadPool(WORKERS) { Thread(it, "tiles").apply { isDaemon = true } } }
+
+/** [work] for 0 until [n] on all cores; a [worker] (0 until WORKERS) runs on one thread at a time — its scratch is that thread's. Not from inside [work].
+Once all stop, the first failure is rethrown */
+internal fun parallel(n: Int, work: (worker: Int, i: Int) -> Unit) {
+    if (n <= 1) { if (n == 1) work(0, 0); return }
+    val next = AtomicInteger()
+    val failed = AtomicReference<Throwable>()
+    val tasks = List(minOf(WORKERS, n)) { wk ->
+        pool.submit(Runnable {
+            try {
+                while (failed.get() == null) {
+                    val i = next.getAndIncrement()
+                    if (i >= n) break
+                    work(wk, i)
+                }
+            } catch (e: Throwable) { failed.compareAndSet(null, e) }
+        })
+    }
+    tasks.forEach { it.get() }
+    failed.get()?.let { throw it }
+}
 
 /** Tiles along a side of [len] file px at level [n] (2ⁿ× smaller) */
 internal fun tilesAlong(len: Int, n: Int) = (((len + (1 shl n) - 1) shr n) + TILE - 1) / TILE
@@ -55,7 +83,8 @@ private fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
     for (y in vh until TILE) System.arraycopy(this, (vh - 1) * row, this, y * row, row)
 }
 
-private fun Bitmap.clampPad(vw: Int, vh: Int, raw: ByteArray) {
+/** A TILE² bitmap; [raw] — TILE_BYTES */
+internal fun Bitmap.clampPad(vw: Int, vh: Int, raw: ByteArray) {
     if (vw == TILE && vh == TILE) return
     copyPixelsToBuffer(ByteBuffer.wrap(raw))
     raw.clampPad(vw, vh, bpp)
@@ -115,8 +144,8 @@ private fun halve(below: Array<Bitmap?>, cols: Int, rows: Int, cx: Int, cy: Int,
 }
 
 private fun redoLevels(levels: List<Array<Bitmap?>>, w: Int, h: Int, changed: BooleanArray) {
-    val sub = ByteArray(TILE_BYTES)
-    val out = ByteArray(TILE_BYTES)
+    val subs = arrayOfNulls<ByteArray>(WORKERS)
+    val outs = arrayOfNulls<ByteArray>(WORKERS)
     var below = changed
     for (n in 1 until levels.size) {
         val cols = tilesAlong(w, n)
@@ -124,21 +153,28 @@ private fun redoLevels(levels: List<Array<Bitmap?>>, w: Int, h: Int, changed: Bo
         val subRows = tilesAlong(h, n - 1)
         val up = BooleanArray(levels[n].size)
         for (k in below.indices) if (below[k]) up[k / subCols / 2 * cols + k % subCols / 2] = true
-        for (k in up.indices) if (up[k]) levels[n][k] = halve(levels[n - 1], subCols, subRows, k % cols * 2, k / cols * 2, valid(w, n, k % cols * TILE), valid(h, n, k / cols * TILE), sub, out)
+        val ks = up.indices.filter { up[it] }
+        parallel(ks.size) { wk, i ->
+            val k = ks[i]
+            levels[n][k] = halve(levels[n - 1], subCols, subRows, k % cols * 2, k / cols * 2, valid(w, n, k % cols * TILE), valid(h, n, k / cols * TILE),
+                subs[wk] ?: ByteArray(TILE_BYTES).also { subs[wk] = it }, outs[wk] ?: ByteArray(TILE_BYTES).also { outs[wk] = it })
+        }
         below = up
     }
 }
 
-/** [make] remakes each [touched] level-0 tile from its old one (null — empty); an immutable result is shared as is. Nothing left → null */
-internal fun Tiles?.edited(id: String, w: Int, h: Int, touched: BooleanArray, make: (old: Bitmap?, x: Int, y: Int) -> Bitmap?): Tiles? {
+/** [make] remakes each [touched] level-0 tile from its old one (null — empty); an immutable result is shared as is. Nothing left → null.
+Tiles are made on all cores: [make] uses [worker]'s scratch (see parallel) */
+internal fun Tiles?.edited(id: String, w: Int, h: Int, touched: BooleanArray, make: (worker: Int, old: Bitmap?, x: Int, y: Int) -> Bitmap?): Tiles? {
     val levels = this?.levels?.map { it.copyOf() } ?: List(levelCount(w, h)) { n -> arrayOfNulls<Bitmap>(tilesAlong(w, n) * tilesAlong(h, n)) }
     val cols = tilesAlong(w, 0)
-    val raw = ByteArray(TILE_BYTES)
-    for (k in touched.indices) {
-        if (!touched[k]) continue
+    val raws = arrayOfNulls<ByteArray>(WORKERS)
+    val ks = touched.indices.filter { touched[it] }
+    parallel(ks.size) { wk, i ->
+        val k = ks[i]
         val x = k % cols * TILE
         val y = k / cols * TILE
-        levels[0][k] = make(levels[0][k], x, y)?.also { if (it.isMutable) it.clampPad(valid(w, 0, x), valid(h, 0, y), raw) }
+        levels[0][k] = make(wk, levels[0][k], x, y)?.also { t -> if (t.isMutable) t.clampPad(valid(w, 0, x), valid(h, 0, y), raws[wk] ?: ByteArray(TILE_BYTES).also { raws[wk] = it }) }
     }
     if (levels[0].all { it == null }) return null
     redoLevels(levels, w, h, touched)

@@ -23,6 +23,8 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.createBitmap
+import com.perkus.imagoedit.data.BLUR_EXACT
+import com.perkus.imagoedit.data.Blurred
 import com.perkus.imagoedit.data.Clone
 import com.perkus.imagoedit.data.Dab
 import com.perkus.imagoedit.data.Feather
@@ -34,10 +36,10 @@ import com.perkus.imagoedit.data.SMEAR_MAX
 import com.perkus.imagoedit.data.SMEAR_STEP
 import com.perkus.imagoedit.data.Selection
 import com.perkus.imagoedit.data.Smear
+import com.perkus.imagoedit.data.Smeared
 import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.TILE
 import com.perkus.imagoedit.data.Tiles
-import com.perkus.imagoedit.data.blurredTile
 import com.perkus.imagoedit.data.canvasToFile
 import com.perkus.imagoedit.data.composite
 import com.perkus.imagoedit.data.drawMasked
@@ -49,6 +51,7 @@ import com.perkus.imagoedit.data.hasImage
 import com.perkus.imagoedit.data.keepPaint
 import com.perkus.imagoedit.data.patchTile
 import com.perkus.imagoedit.data.tilePaint
+import java.nio.ByteBuffer
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.hypot
@@ -61,28 +64,39 @@ private val RING_W = 1.dp
 private val MARK_ARM = 8.dp
 private val MARK_W = 2.dp
 private const val MAX_BLUR = 20f // σ «Области» при Интенсивности 100%, dp; по квадрату
-private const val LIVE_SIGMA = 2f // σ живого размытия, px плитки: шире — в уменьшенной копии
+private const val LIVE_SIGMA = 2f // наименьший σ уменьшенной копии живой «Области», px
+private const val LIVE_GRID = 4f // px экрана на px этой копии: крупнее после растяжения видна гранями — σ копии растёт до BLUR_EXACT
 private const val SMEAR_PUSH = 1f // сдвиг пикселей «Пальцем» при Интенсивности 100%, диаметров; по квадрату
-private const val SMEAR_R = 32f // наибольший радиус живого «Пальца», px плитки
 
-/** Blur stroke's live result on its Live's tile grid ([w]×[h]): Area — blurred by σ [sigma] (file px), Finger — [smear] */
-private class LiveBlur(val w: Int, val h: Int, val sigma: Float, val smear: Smear?, val render: (Bitmap, Int, Int) -> Unit, private val like: Bitmap?, n: Int) {
+/** Blur stroke's live result on its Live's tile grid ([cols] wide, [n] tiles) of the layer [render] draws: Area — [area] (σ [sigma] file px), Finger — [smear];
+[smeared] — it for the bake, if at the bake's raster */
+private class LiveBlur(val sigma: Float, val area: Blurred?, val smear: Smear?, val render: (Bitmap, Int, Int) -> Unit, private val like: Bitmap?, private val cols: Int, n: Int,
+    val smeared: Smeared?) {
     val px = arrayOfNulls<Bitmap>(n)
 
     fun tile(k: Int) = px[k] ?: patchTile(like).also { px[k] = it }
 
     fun upload() {
         val s = smear ?: return
-        val cols = (w + TILE - 1) / TILE
         for (k in px.indices) if (s.dirty[k]) s.into(tile(k), k % cols * TILE, k / cols * TILE)
     }
+
+    fun recycle() { smear?.recycle() }
+}
+
+/** A live tile's visits (Dab.visit): [out] — the coverage its bitmap gets */
+private class Visited {
+    val acc = ByteArray(TILE * TILE)
+    val cur = ByteArray(TILE * TILE)
+    val out = ByteArray(TILE * TILE)
 }
 
 /** A stroke's live ALPHA_8 coverage on layer [layer] (Layer.id), [k] tile px per file px; [color] null — erases, unless [clone] or [blur]; [clip], [feather] — the selection, file px;
-[toFile] — canvas px → file px; [select] — the Selection brush's */
+[toFile] — canvas px → file px; [select] — the Selection brush's. A not solid Dab's [tiles] come from their [visits] */
 private class Live(val layer: Long, val color: Int?, val clone: Clone?, val k: Float, val cols: Int, val rows: Int, val opacity: Float, val clip: Path?, val feather: Feather?,
     val toFile: Matrix, val select: Region.Op?, val blur: LiveBlur?) {
     val tiles = arrayOfNulls<Bitmap>(cols * rows)
+    val visits = arrayOfNulls<Visited>(cols * rows)
     val bounds = RectF() // the dabs' reach, file px
 }
 
@@ -149,6 +163,8 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
     private var r = 0f // file px
     private var step = 0f
     private var dab: Dab? = null
+    private var prevX = Float.NaN // the dab before, tile px
+    private var prevY = Float.NaN
     private val erasePaint = tilePaint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
     private val colorPaint = tilePaint()
     private val coverPaint = tilePaint()
@@ -210,8 +226,10 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         val hard = b[BrushParam.Hardness].value / 100f
         val flow = b[BrushParam.Paint].value / 100f
         val edge = if (finger) 1f else hard // the smudge has the profile itself
-        if (dab.let { it == null || it.hardness != edge || it.flow != flow || it.spacing != spacing }) dab = Dab(edge, flow, spacing)
-        val k = minOf(1f, scale, if (finger) SMEAR_R / r else 1f)
+        if (dab.let { it == null || it.hardness != edge || it.flow != flow }) dab = Dab(edge, flow)
+        prevX = Float.NaN
+        prevY = Float.NaN
+        val k = minOf(1f, scale, if (finger) SMEAR_MAX / r else 1f)
         val cols = ceil(l.fileW * k / TILE).toInt()
         val rows = ceil(l.fileH * k / TILE).toInt()
         val blur = if (tool != Tool.Blur) null else {
@@ -222,11 +240,19 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
             val lp = layerPatch
             val fw = l.fileW
             val fh = l.fileH
-            val render = { into: Bitmap, x: Int, y: Int -> canvas.composite(into, x, y, lb, fw, fh, lm, lp, sourcePaints, k) }
+            // Its own canvas: the bake may go on with a handed smudge
+            val rc = Canvas()
+            val rp = MaskPaints()
+            val render = { into: Bitmap, x: Int, y: Int -> rc.composite(into, x, y, lb, fw, fh, lm, lp, rp, k) }
             // keep q moves px by 2r·q/(1 − q) = push diameters
             val push = intensity * intensity * SMEAR_PUSH
-            val smear = if (finger) Smear(lw, lh, r * k, hard, push / (1 + push), lb, render = render) else null
-            LiveBlur(lw, lh, toFile.mapRadius(MAX_BLUR * intensity * intensity * density), smear, render, lb, cols * rows)
+            val smear = if (finger) Smear(lw, lh, r * k, hard, push / (1 + push), lb, k < 1f, render) else null
+            val sigma = MAX_BLUR * intensity * intensity * density // screen px
+            val fileSigma = toFile.mapRadius(sigma)
+            // Copy px about LIVE_GRID screen px; a wide σ capped at BLUR_EXACT, as the bake's
+            val area = if (finger) null else Blurred(lw, lh, fileSigma * k, (sigma / LIVE_GRID).coerceIn(LIVE_SIGMA, BLUR_EXACT))
+            // At the bake's raster (Stroke.bake: ks) the bake takes the smudge as is
+            LiveBlur(fileSigma, area, smear, render, lb, cols, cols * rows, smear?.takeIf { k == minOf(1f, SMEAR_MAX / r) }?.let { Smeared(it, lm, lp) })
         }
         cur = Live(l.id, if (tool == Tool.Drawing) o.color.value.toArgb() else null, clone, k, cols, rows, b[BrushParam.Opacity].value / 100f, clip, sel?.feather, back,
             if (selects) o.selection.mode.value.op else null, blur)
@@ -273,10 +299,10 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
             return
         }
         val s = cur ?: return
-        var d = dab ?: return
+        val d = dab ?: return
         val lb = s.blur
         if (count == 0 && lb?.smear != null) return cancel()
-        if (count == 0) { d = Dab(d.hardness, d.flow, 2f); dab = d; put(startX, startY) } else walk(lastX, lastY)
+        if (count == 0) put(startX, startY) else walk(lastX, lastY)
         cur = null
         ring = Offset.Unspecified
         if (s.clone != null) {
@@ -285,8 +311,8 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         }
         version++
         val smear = lb?.smear
-        onStroke(Stroke(s.layer, curFile, s.color, xy.copyOf(2 * count), r, smear?.hardness ?: d.hardness, d.flow, d.spacing, s.opacity, curArea, s.clone, s.select,
-            blur = if (lb != null && smear == null) lb.sigma else 0f, smudge = smear?.keep)) { drop(s) }
+        onStroke(Stroke(s.layer, curFile, s.color, xy.copyOf(2 * count), r, smear?.hardness ?: d.hardness, d.flow, s.opacity, curArea, s.clone, s.select,
+            blur = if (lb != null && smear == null) lb.sigma else 0f, smudge = smear?.keep, smeared = lb?.smeared)) { drop(s) }
     }
 
     fun cancel() {
@@ -343,11 +369,19 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         for (ty in r0..r1) for (tx in c0..c1) {
             val k = ty * s.cols + tx
             val t = s.tiles[k] ?: (spare.removeLastOrNull() ?: createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8)).also { s.tiles[k] = it }
-            canvas.setBitmap(t)
-            canvas.translate(-tx * TILE.toFloat(), -ty * TILE.toFloat())
-            d.draw(canvas, lx, ly, lr)
-            if (b != null && b.smear == null && b.px[k] == null) blurredTile(b.tile(k), tx * TILE, ty * TILE, b.w, b.h, b.sigma * s.k, LIVE_SIGMA, b.render)
+            if (d.solid) {
+                canvas.setBitmap(t)
+                canvas.translate(-tx * TILE.toFloat(), -ty * TILE.toFloat())
+                d.draw(canvas, lx, ly, lr)
+            } else {
+                val v = s.visits[k] ?: Visited().also { s.visits[k] = it }
+                d.visit(lx, ly, prevX, prevY, lr, tx * TILE, ty * TILE, TILE, TILE, TILE, v.acc, v.cur, v.out)
+                t.copyPixelsFromBuffer(ByteBuffer.wrap(v.out))
+            }
+            if (b != null && b.area != null && b.px[k] == null) b.area.into(b.tile(k), tx * TILE, ty * TILE, b.render)
         }
+        prevX = lx
+        prevY = ly
         b?.smear?.dab(lx, ly)
     }
 
@@ -355,7 +389,7 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
     private fun drop(s: Live) {
         shown.remove(s)
         for (t in s.tiles) if (t != null) { t.eraseColor(Color.TRANSPARENT); spare += t }
-        s.blur?.smear?.recycle()
+        s.blur?.recycle()
         version++
     }
 

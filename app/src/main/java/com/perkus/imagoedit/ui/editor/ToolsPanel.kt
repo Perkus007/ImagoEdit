@@ -8,7 +8,6 @@ import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -66,6 +65,7 @@ import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.LocalFrame
+import com.perkus.imagoedit.ui.common.MenuItem
 import com.perkus.imagoedit.ui.common.OpenerGuard
 import com.perkus.imagoedit.ui.common.Popover
 import com.perkus.imagoedit.ui.common.SIDEBAR_W
@@ -80,11 +80,10 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 private const val UNFOLD_MS = 150 // короче анимаций панелей: палец уже ведёт по списку
-private val PANEL_GAP = 4.dp // между панелью и подсказкой, окном настроек или меню
+val PANEL_GAP = 4.dp // между панелью и подсказкой, окном настроек или меню
 private val TIP_SHAPE = RoundedCornerShape(4.dp)
 private val ROUND_BTN = 50.dp
 private val SECTION_GAP = 8.dp
-private val ITEM_SHAPE = RoundedCornerShape(4.dp)
 private val MENU_ICON_CENTER = 28.dp // отступ Popover 8 + отступ MenuItem 8 + половина иконки 12
 
 /** name is persisted */
@@ -104,6 +103,7 @@ class ToolOptions(settings: AppSettings) {
     val text = TextOptions(settings)
     val transform = TransformOptions(settings)
     val fill = FillOptions(settings)
+    val transition = TransitionOptions(settings)
 }
 
 interface ToolStyle {
@@ -113,7 +113,7 @@ interface ToolStyle {
 
 /** [inBar]: a top bar menu; [own]: the content places itself, no card */
 enum class ToolPopup(val inBar: Boolean = false, val own: Boolean = false) {
-    Styles, Corners, Tolerance, Brush, Color(own = true), Font(own = true), Type(own = true), Edit(true), Selection(true), Tools3(true)
+    Styles, Corners, Tolerance, Brush, Color(own = true), Font(own = true), Type(own = true), Opacity(own = true), Edit(true), Selection(true), Tools3(true)
 }
 
 /** [shown] — the content slides in and out by it */
@@ -196,19 +196,9 @@ fun <E> StyleBtn(o: EnumOption<E>, open: ToolPopup?, onOpen: (OpenPopup) -> Unit
     }
 }
 
-/** [indication] = null for one-shot actions */
 @Composable
-fun MenuItem(s: ToolStyle, selected: Boolean = false, enabled: Boolean = true, indication: Indication? = LocalIndication.current, onClick: () -> Unit) {
-    val color = Color.Black.copy(alpha = if (enabled) 1f else DISABLED_ALPHA)
-    Row(
-        Modifier.fillMaxWidth().clip(ITEM_SHAPE).then(if (selected) Modifier.background(TranslucentGray) else Modifier)
-            .clickable(interactionSource = null, indication = indication, enabled = enabled, onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
-        Arrangement.spacedBy(8.dp), Alignment.CenterVertically
-    ) {
-        Icon(s.icon, null, Modifier.size(24.dp), color)
-        Text(stringResource(s.title), color = color, fontSize = 14.sp, maxLines = 1)
-    }
-}
+fun MenuItem(s: ToolStyle, selected: Boolean = false, enabled: Boolean = true, indication: Indication? = LocalIndication.current, onClick: () -> Unit) =
+    MenuItem(stringResource(s.title), selected, enabled, indication, onClick) { Icon(s.icon, null, Modifier.size(24.dp), it) }
 
 /** [fill] is read in the draw phase */
 @Composable

@@ -60,6 +60,12 @@ object AppIcons {
     val OutlineCenter = svg("M5 2h14a3 3 0 0 1 3 3v14a3 3 0 0 1-3 3H5a3 3 0 0 1-3-3V5a3 3 0 0 1 3-3z M5 7a2 2 0 0 1 2-2M11 5h2M17 5a2 2 0 0 1 2 2M19 11v2M19 17a2 2 0 0 1-2 2M13 19h-2M7 19a2 2 0 0 1-2-2M5 13v-2 M9.5 8h5a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-5a1.5 1.5 0 0 1-1.5-1.5v-5A1.5 1.5 0 0 1 9.5 8z", strokeWidth = 2f)
     val LinkVertical = svg(d = "M12 14a4 4 0 004-4V6a4 4 0 00-8 0v2M12 10a4 4 0 00-4 4v4a4 4 0 008 0v-2", strokeWidth = 2f)
     val UnlinkVertical = svg(d = "M8 10V6a4 4 0 018 0v4M8 14v4a4 4 0 008 0v-4M2 8l3 2M2 16l3-2M22 8l-3 2M22 16l-3-2", strokeWidth = 2f)
+    // Стрелки в 2 противоположные стороны
+    val ArrowRightLeft = svg("m16 3 4 4-4 4M20 7H4M8 21l-4-4 4-4M4 17h16", strokeWidth = 2f)
+    // Линейный градиент
+    val Linear = svg("M4 12h16M3 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M19 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0", strokeWidth = 2f)
+    // Радиальный градиент
+    val Radial = svg("M3 12a9 9 0 1 0 18 0 9 9 0 1 0 -18 0M11 3a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M12 12h9M11 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M20 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0", strokeWidth = 2f)
 
     /** Кнопки инструмента "Move" */
     val Move = svg("M12 2v20M2 12h20M9 5l3-3 3 3M15 19l-3 3-3-3M5 9l-3 3 3 3M19 9l3 3-3 3", strokeWidth = 2f)
