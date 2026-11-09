@@ -247,6 +247,7 @@ in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and in the list below.
 - [avif-coder](https://github.com/awxkee/avif-coder) — MIT (bundles libavif, dav1d — BSD-2-Clause; libyuv — BSD-3-Clause; Eigen — MPL-2.0; Rust codecs — Apache-2.0)
 - AndroidX / Jetpack Compose — Apache-2.0
 - Fonts: Caveat, Handjet, Tiny5 — SIL OFL 1.1; Roboto Slab — Apache-2.0
+- Icons: [Lucide](https://lucide.dev) — ISC (some are derived from [Feather](https://github.com/feathericons/feather) — MIT)
 
 Full license texts: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 

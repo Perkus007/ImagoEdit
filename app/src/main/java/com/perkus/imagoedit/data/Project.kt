@@ -1,6 +1,7 @@
 package com.perkus.imagoedit.data
 
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Matrix
 import android.graphics.Path
@@ -9,6 +10,7 @@ import android.graphics.RectF
 import android.graphics.Region
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 import kotlin.random.Random
 
 const val MAX_SIDE = 16000
@@ -21,9 +23,47 @@ const val MAX_OPACITY = 100 // %
 (EXIF-like: 0..3 — clockwise ·90°, 4..7 — the same after a horizontal flip). [mask] — erase mask id (LayerMask); [patch] — brush strokes' tiles id: where it has a tile,
 that tile is shown in place of pixels × mask; without [file] the patch is all there is. [id] — kept through edits: tools and bakes find the layer by it.
 A new property goes into JSON too (ProjectStore.kt, optX with a default) */
-data class Layer(val file: String? = null, val visible: Boolean = true, val x: Int = 0, val y: Int = 0, val w: Int = 0, val h: Int = 0, val opacity: Int = MAX_OPACITY, val orient: Int = 0, val mask: String? = null,
-    val patch: String? = null, val id: Long = newLayerId()) {
+data class Layer(val file: String? = null, val visible: Boolean = true, val x: Int = 0, val y: Int = 0, val w: Int = 0, val h: Int = 0, val opacity: Int = MAX_OPACITY, val blend: Blend = Blend.NORMAL,
+    val orient: Int = 0, val mask: String? = null, val patch: String? = null, val id: Long = newLayerId()) {
     val inPlace = ContentTransform.initial(ContentBox(), x, y, w, h)
+}
+
+/** How a layer mixes with the composite below it (Photoshop's modes, in its order): Skia's own, the same on GPU and a software canvas. [mix] — Skia's (W3C) formula
+on one unpremultiplied channel of the color below and the layer's; null — non-separable. name is persisted */
+enum class Blend(val mode: BlendMode, private val mix: ((b: Float, s: Float) -> Float)? = null) {
+    NORMAL(BlendMode.SRC_OVER, { _, s -> s }),
+    DARKEN(BlendMode.DARKEN, { b, s -> minOf(b, s) }),
+    MULTIPLY(BlendMode.MULTIPLY, { b, s -> b * s }),
+    LIGHTEN(BlendMode.LIGHTEN, { b, s -> maxOf(b, s) }),
+    SCREEN(BlendMode.SCREEN, { b, s -> b + s - b * s }),
+    OVERLAY(BlendMode.OVERLAY, { b, s -> if (b <= 0.5f) 2 * b * s else 1 - 2 * (1 - b) * (1 - s) }),
+    SOFT_LIGHT(BlendMode.SOFT_LIGHT, { b, s -> if (s <= 0.5f) b - (1 - 2 * s) * b * (1 - b) else b + (2 * s - 1) * ((if (b <= 0.25f) ((16 * b - 12) * b + 4) * b else sqrt(b)) - b) }),
+    DIFFERENCE(BlendMode.DIFFERENCE, { b, s -> abs(b - s) }),
+    EXCLUSION(BlendMode.EXCLUSION, { b, s -> b + s - 2 * b * s }),
+    COLOR(BlendMode.COLOR); // the layer's hue and saturation with the luminosity below
+
+    /** As Skia draws it, for the pipette: unpremultiplied [s] (RGB) at coverage [k] over premultiplied [d] (RGB) of alpha [a]; [d] gets the result, returns its alpha */
+    fun over(s: FloatArray, k: Float, d: FloatArray, a: Float): Float {
+        val b = FloatArray(3) { if (a > 0f) d[it] / a else 0f }
+        val m = mix?.let { f -> FloatArray(3) { f(b[it], s[it]) } } ?: s.withLum(lum(b))
+        for (i in 0..2) d[i] = ((1 - a) * s[i] + a * m[i]) * k + d[i] * (1 - k)
+        return k + a * (1 - k)
+    }
+}
+
+private fun lum(c: FloatArray) = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2]
+
+/** W3C SetLum: shifted to luminosity [l], then pulled into 0..1 keeping it */
+private fun FloatArray.withLum(l: Float): FloatArray {
+    val shift = l - lum(this)
+    val c = FloatArray(3) { this[it] + shift }
+    val n = c.min()
+    val x = c.max()
+    for (i in 0..2) {
+        if (n < 0f) c[i] = l + (c[i] - l) * l / (l - n)
+        if (x > 1f) c[i] = l + (c[i] - l) * (1 - l) / (x - l)
+    }
+    return c
 }
 
 /** Random, never 0 */
@@ -69,7 +109,7 @@ fun Layer.region() = Region(x, y, x + w, y + h)
 fun Canvas.drawLayer(l: Layer, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, p: MaskPaints, filter: Boolean = false, kx: Float = 1f, ky: Float = kx) {
     save()
     concat(l.fileToCanvas(kx = kx, ky = ky))
-    drawMasked(bmp, l.fileW, l.fileH, mask, patch, maxOf(kx, ky), l.alpha255, filter, p)
+    drawMasked(bmp, l.fileW, l.fileH, mask, patch, maxOf(kx, ky), l.alpha255, filter, p, blend = l.blend.mode)
     restore()
 }
 

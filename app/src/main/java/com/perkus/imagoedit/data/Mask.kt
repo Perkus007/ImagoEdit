@@ -1,6 +1,7 @@
 package com.perkus.imagoedit.data
 
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -61,8 +62,9 @@ interface MaskOverlay {
 
 /** [bmp] (or a smaller copy; null — none) over [w]×[h] file px × [mask] + [patch] by ADD: mask and patch are disjoint, so filtered coarse levels sum to a whole
 (SRC_OVER leaves a see-through seam at patch tile edges). Levels for [k] px per file px. The single compositing path: preview, merge, crop, export, thumbnails, clone.
-A software canvas goes in bands over its clip only */
-fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float, alpha: Int, filter: Boolean, p: MaskPaints, overlay: MaskOverlay? = null, key: Long = 0L) {
+[blend] — onto what's drawn below. A software canvas goes in bands over its clip only */
+fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float, alpha: Int, filter: Boolean, p: MaskPaints, overlay: MaskOverlay? = null, key: Long = 0L,
+    blend: BlendMode = BlendMode.SRC_OVER) {
     p.image.isFilterBitmap = filter
     p.mask.isFilterBitmap = filter
     p.patch.isFilterBitmap = filter
@@ -70,18 +72,21 @@ fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Til
     if (overlay == null && mask == null && (bmp == null || patch == null)) {
         if (bmp != null) {
             p.image.alpha = alpha
+            p.image.blendMode = blend
             drawBitmap(bmp, null, p.rect.apply { set(0f, 0f, w.toFloat(), h.toFloat()) }, p.image)
         } else if (patch != null) {
             p.patch.alpha = alpha
-            p.patch.xfermode = null
+            p.patch.blendMode = blend
             drawPatch(patch, pn, 0f, w.toFloat(), h.toFloat(), p)
         }
         return
     }
     p.image.alpha = 255
+    p.image.blendMode = BlendMode.SRC_OVER
     p.patch.alpha = 255
     p.patch.xfermode = p.add
     p.layer.alpha = alpha
+    p.layer.blendMode = blend
     val n = mask?.let { minOf(levelFor(k), it.levels.lastIndex) } ?: 0
     val band = if (isHardwareAccelerated) h.toFloat() else maxOf(1f, MASK_BAND / k)
     var top = 0f
@@ -94,6 +99,7 @@ fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Til
     while (top < end) {
         val bottom = minOf(end, top + band)
         saveLayer(0f, top, w.toFloat(), bottom, p.layer)
+        if (!isHardwareAccelerated) clipRect(0f, top, w.toFloat(), bottom) // bands meeting mid-px: the layers' rounded-out rows overlap, each px is blended once
         if (bmp != null) drawBitmap(bmp, null, p.rect.apply { set(0f, 0f, w.toFloat(), h.toFloat()) }, p.image)
         if (mask != null) drawTiles(mask.levels[n], mask.cols(n), (1 shl n).toFloat(), p.mask, p.rect)
         if (patch != null) drawPatch(patch, pn, top, w.toFloat(), bottom, p)

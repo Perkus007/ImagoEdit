@@ -41,6 +41,17 @@
     <string name="duplicate_layer">Дубликат выбранного слоя</string>
     <string name="layer_from_selection">Слой из выделения</string>
     <string name="opacity">Непрозрачность</string>
+    <string name="blend_mode">Режим наложения</string>
+    <string name="blend_normal">Обычный</string>
+    <string name="blend_darken">Затемнение</string>
+    <string name="blend_multiply">Умножение</string>
+    <string name="blend_lighten">Замена светлым</string>
+    <string name="blend_screen">Экран</string>
+    <string name="blend_overlay">Перекрытие</string>
+    <string name="blend_soft_light">Мягкий свет</string>
+    <string name="blend_difference">Разница</string>
+    <string name="blend_exclusion">Исключение</string>
+    <string name="blend_color">Цветность</string>
     <string name="merging_layers">Объединение слоёв</string>
     <string name="merge_all_layers">Объединить все слои</string>
     <string name="merge_visible_layers">Объединить видимые слои</string>

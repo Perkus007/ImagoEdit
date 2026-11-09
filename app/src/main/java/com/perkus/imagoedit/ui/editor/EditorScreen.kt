@@ -79,7 +79,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     var dialog by remember { mutableStateOf<EditorDialog?>(null) }
 
     var layerMenu by remember { mutableStateOf<Rect?>(null) }
-    val preview = remember { OpacityPreview() }
+    val preview = remember { LayerPreview() }
 
     val context = LocalContext.current
     val settings = remember { AppSettings(context) }
@@ -257,7 +257,12 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     BackHandler(transform != null) { if (!busy) closeTransform() }
     BackHandler(fill != null) { if (!applying) fill = null }
     BackHandler(transition != null) { if (!applying) transition = null }
-    BackHandler(layerMenu != null) { layerMenu = null }
+    // A blend mode picked in the menu becomes one history step; committed before closing: the canvas never shows the old one in between
+    fun closeLayerMenu() {
+        project.layers.getOrNull(target)?.let { l -> preview.picked(l)?.let { vm.setBlend(target, it) } }
+        layerMenu = null
+    }
+    BackHandler(layerMenu != null) { closeLayerMenu() }
     BackHandler(popup != null) { popup = null }
 
     Box(Modifier.fillMaxSize()) {
@@ -339,10 +344,10 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         fill?.let { s -> FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) { bake(s.stroke()) { fill = null } } }
         transition?.let { s -> TransitionOverlay(s, { popup = it }, { transition = null }) { bake(s.stroke()) { transition = null } } }
         // Popovers' press-outside layer, permanent (see dismissOnPress)
-        Box(Modifier.fillMaxSize().dismissOnPress { layerMenu = null; popup = null })
+        Box(Modifier.fillMaxSize().dismissOnPress { closeLayerMenu(); popup = null })
         layerMenu?.let { anchor ->
-            LayerMenu(anchor, project.layers[target].opacity, project.layers[target].id, project.layers.size > 1 || project.layers[target].hasImage, preview, { vm.setOpacity(target, it) },
-                { vm.deleteLayer(target) }, { layerMenu = null; dialog = EditorDialog.Merge }) { layerMenu = null }
+            LayerMenu(anchor, project.layers[target], project.layers.size > 1 || project.layers[target].hasImage, preview, { vm.setOpacity(target, it) },
+                { vm.deleteLayer(target) }, { layerMenu = null; dialog = EditorDialog.Merge }, ::closeLayerMenu)
         }
         ToolPopover(popup) { popup = null }
 

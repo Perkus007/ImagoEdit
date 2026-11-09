@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.perkus.imagoedit.data.Blend
 import com.perkus.imagoedit.data.ContentTransform
 import com.perkus.imagoedit.data.Cut
 import com.perkus.imagoedit.data.ExportSettings
@@ -333,7 +334,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }?.toSelection()
         }) { (r, sel) ->
             r.third.forEach { tiles[it.id] = it }
-            putLayer(i, r.first.copy(opacity = opacity), r.second?.asImageBitmap(), insert = pend != null, pend?.cut?.rest, if (area != null) sel else selection)
+            putLayer(i, r.first.copy(opacity = opacity, blend = cur.blend), r.second?.asImageBitmap(), insert = pend != null, pend?.cut?.rest, if (area != null) sel else selection)
             pending = null
             if (moved == null) release(listOfNotNull(cur.file))
             onDone()
@@ -360,7 +361,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         runBusy(Dispatchers.IO, tag, {
             p.layers.mapIndexed { i, l ->
                 kept(l)?.let { Triple(it, imgs[i], emptyList<Tiles>()) }
-                    ?: store.bakeLayer(q, l, imgs[i]?.asAndroidBitmap(), ms[i], ps[i], t(l)).let { (b, bmp, ts) -> Triple(b.copy(visible = l.visible, opacity = l.opacity, id = l.id), bmp?.asImageBitmap(), ts) }
+                    ?: store.bakeLayer(q, l, imgs[i]?.asAndroidBitmap(), ms[i], ps[i], t(l)).let { (b, bmp, ts) -> Triple(b.copy(visible = l.visible, opacity = l.opacity, blend = l.blend, id = l.id), bmp?.asImageBitmap(), ts) }
             } to p.selection?.let(sel)
         }) { (out, s) ->
             out.forEach { o -> o.third.forEach { tiles[it.id] = it } }
@@ -411,6 +412,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun setOpacity(i: Int, percent: Int) = editLayer(i) { it.copy(opacity = percent.coerceIn(0, MAX_OPACITY)) }
 
+    fun setBlend(i: Int, blend: Blend) = editLayer(i) { it.copy(blend = blend) }
+
     /** The only layer is cleared instead. The active one at or above [i] goes one down */
     fun deleteLayer(i: Int) {
         val p = editing ?: return
@@ -421,7 +424,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun clearLayer(i: Int) {
         val p = editing ?: return
         val old = p.layers.getOrNull(i)?.takeIf { it.hasImage } ?: return
-        edit(p.copy(layers = p.layers.putAt(i, Layer(visible = old.visible, opacity = old.opacity, id = old.id))), layers.putAt(i, null))
+        edit(p.copy(layers = p.layers.putAt(i, Layer(visible = old.visible, opacity = old.opacity, blend = old.blend, id = old.id))), layers.putAt(i, null))
     }
 
     fun moveLayer(from: Int, to: Int) {
@@ -438,14 +441,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         edit(p.copy(layers = p.layers.inserted(above + 1, layer), active = above + 1), layers.inserted(above + 1, if (duplicate) layers[above] else null))
     }
 
-    /** [idx] ascending, ≥ 2; the result at idx.first() becomes active. Old files stay referenced by history: no release. [onDone] — once it's in */
+    /** [idx] ascending, ≥ 2; the result at idx.first() becomes active, with its blend mode (as Photoshop's merge). Old files stay referenced by history: no release.
+    [onDone] — once it's in */
     fun mergeLayers(idx: List<Int>, onDone: () -> Unit) {
         val p = editing ?: return
         val bitmaps = layers.map { it?.asAndroidBitmap() }
         val ms = p.layers.map { mask(it) }
         val ps = p.layers.map { patch(it) }
         runBusy(Dispatchers.IO, "merge", { store.mergeLayers(p, idx, bitmaps, ms, ps) }) { (layer, img) ->
-            edit(p.copy(layers = p.layers.merged(idx, layer), active = idx.first()), layers.merged(idx, img?.asImageBitmap()))
+            edit(p.copy(layers = p.layers.merged(idx, layer.copy(blend = p.layers[idx.first()].blend)), active = idx.first()), layers.merged(idx, img?.asImageBitmap()))
             onDone()
         }
     }
@@ -573,7 +577,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         withLayer(i, "selection", { l, img, m, pt ->
             if (isClear(l, img, m, pt, outside)) null
             else cropLayer(l, img, m, pt, s).let { (piece, bmp) ->
-                bmp?.let { PendingImage(piece.copy(opacity = l.opacity), it, i + 1, Cut(cleared(l, m, pt, s, stagedName(MASK), stagedName(PATCH)), inside)) } ?: Unit
+                bmp?.let { PendingImage(piece.copy(opacity = l.opacity, blend = l.blend), it, i + 1, Cut(cleared(l, m, pt, s, stagedName(MASK), stagedName(PATCH)), inside)) } ?: Unit
             }
         }) {
             when (it) {
@@ -603,7 +607,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val s = selection ?: return
         withLayer(i, "selection", { l, img, m, pt -> if (isClear(l, img, m, pt, outside)) null else cropLayer(l, img, m, pt, s) }) { r ->
             if (r == null) addLayer(i, duplicate = true)
-            else editing?.layers?.getOrNull(i)?.let { src -> putLayer(i + 1, r.first.copy(opacity = src.opacity), r.second?.asImageBitmap(), insert = true) }
+            else editing?.layers?.getOrNull(i)?.let { src -> putLayer(i + 1, r.first.copy(opacity = src.opacity, blend = src.blend), r.second?.asImageBitmap(), insert = true) }
         }
     }
 
@@ -682,7 +686,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (m, p) = r
         m?.let { tiles[it.id] = it }
         p?.let { tiles[it.id] = it }
-        val g = grown?.first?.copy(visible = l.visible, opacity = l.opacity, id = l.id) ?: l.paintable(e.width, e.height)
+        val g = grown?.first?.copy(visible = l.visible, opacity = l.opacity, blend = l.blend, id = l.id) ?: l.paintable(e.width, e.height)
         edit(e.copy(layers = e.layers.putAt(at, g.copy(mask = m?.id, patch = p?.id))), grown?.let { layers.putAt(at, it.second.asImageBitmap()) } ?: layers)
         return true
     }
@@ -725,18 +729,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (next != old) edit(p.copy(layers = p.layers.putAt(i, next)), layers)
     }
 
-    /** Uses current state. [insert] — [placed] becomes a new active layer at [i], else replaces it (keeping visibility and id). [rest] — the layer below gets it (a cut).
-    [sel] — the selection afterwards */
+    /** Uses current state. [insert] — [placed] becomes a new active layer at [i], else replaces it (keeping visibility, blend mode and id). [rest] — the layer below gets it
+    (a cut). [sel] — the selection afterwards */
     private fun putLayer(i: Int, placed: Layer, img: ImageBitmap?, insert: Boolean, rest: Pair<Layer, List<Tiles>>? = null, sel: Selection? = selection) {
         val e = editing ?: return
         var ls = e.layers
         var bs = layers
         if (rest != null) {
-            ls = ls.putAt(i - 1, rest.first.copy(visible = ls[i - 1].visible, opacity = ls[i - 1].opacity, id = ls[i - 1].id))
+            ls = ls.putAt(i - 1, rest.first.copy(visible = ls[i - 1].visible, opacity = ls[i - 1].opacity, blend = ls[i - 1].blend, id = ls[i - 1].id))
             if (rest.first.file == null) bs = bs.putAt(i - 1, null)
         }
         if (insert) edit(e.copy(layers = ls.inserted(i, placed), selection = sel, active = i), bs.inserted(i, img))
-        else edit(e.copy(layers = ls.putAt(i, placed.copy(visible = ls[i].visible, id = ls[i].id)), selection = sel), bs.putAt(i, img))
+        else edit(e.copy(layers = ls.putAt(i, placed.copy(visible = ls[i].visible, blend = ls[i].blend, id = ls[i].id)), selection = sel), bs.putAt(i, img))
     }
 
     /** Every displayed state passes here → autosaved */

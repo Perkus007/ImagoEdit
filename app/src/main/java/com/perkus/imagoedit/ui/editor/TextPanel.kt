@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -36,11 +35,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -70,6 +66,7 @@ import com.perkus.imagoedit.ui.common.anchored
 import com.perkus.imagoedit.ui.common.consumeTaps
 import com.perkus.imagoedit.ui.common.plainClickable
 import com.perkus.imagoedit.ui.common.rememberBounds
+import com.perkus.imagoedit.ui.common.scrollbar
 import com.perkus.imagoedit.ui.common.trackBounds
 import com.perkus.imagoedit.ui.theme.Grey
 import com.perkus.imagoedit.ui.theme.ScreenBg
@@ -98,8 +95,6 @@ private val HINT_W = 280.dp
 private val HINT_GAP = 16.dp // от низа иконки ⓘ
 private val PICKER_SHAPE = RoundedCornerShape(10.dp)
 private val FONT_ROW_H = 40.dp // одной высоты: на этом стоит полоса прокрутки
-private val THUMB_W = 4.dp
-private val THUMB_MIN = 24.dp
 
 private fun TextState.panelH() = BAR_H * (if (expanded) ROWS + 1 else ROWS)
 
@@ -123,7 +118,7 @@ private fun TextPanel(s: TextState, picture: PipetteSource, open: ToolPopup?, on
         // 16dp apart as row 2's: each over one of them
         Row(Modifier.width(ROW_W), Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
             Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
-                RoundBtn(null, false, { s.color }, Modifier, FIELD_H) { onPopup(colorPopup(s.options.color, picture, it)) }
+                RoundBtn(null, false, { s.color }, Modifier, FIELD_H) { onPopup(colorPopup(s.options.color, ColorOpacity({ s.opacity }, s::finish, s::slideOpacity), picture, it)) }
                 TextField(s, onType, Modifier.weight(1f))
                 FontField(s, onPopup, Modifier.weight(1f))
             }
@@ -257,17 +252,4 @@ private fun rememberPickerWidth(fonts: Fonts): Dp {
             (maxOf(tab * 3 + PAD * 4, name + ITEM_PAD * 2 + FIELD_H + PAD * 3) + 1.dp).coerceAtMost(PICKER_MAX)
         }
     }
-}
-
-/** Read in the draw phase: scrolling doesn't recompose */
-private fun Modifier.scrollbar(s: LazyListState) = drawWithContent {
-    drawContent()
-    val info = s.layoutInfo
-    val row = info.visibleItemsInfo.firstOrNull()?.size?.toFloat() ?: return@drawWithContent
-    val all = row * info.totalItemsCount
-    if (all <= size.height) return@drawWithContent
-    val w = THUMB_W.toPx()
-    val len = maxOf(size.height * size.height / all, THUMB_MIN.toPx())
-    val y = (s.firstVisibleItemIndex * row + s.firstVisibleItemScrollOffset) / (all - size.height) * (size.height - len)
-    drawRoundRect(Grey, Offset(size.width - w * 1.5f, y.coerceIn(0f, size.height - len)), Size(w, len), CornerRadius(w / 2))
 }

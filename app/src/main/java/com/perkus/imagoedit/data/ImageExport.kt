@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.ColorSpace
+import android.graphics.PorterDuff
 import android.media.MediaScannerConnection
 import android.os.Environment
 import androidx.annotation.Keep
@@ -43,8 +44,7 @@ class ExportError(cause: Throwable) : RuntimeException(cause)
 private fun exportDir() = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), EXPORT_DIR)
 
 /** [first] — bottom visible layer: its color space goes into the file */
-private fun Project.canvasBitmap(fmt: ExportFormat, first: Bitmap?) =
-    createBitmap(width, height, Bitmap.Config.ARGB_8888, fmt != ExportFormat.JPEG, first?.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB)).apply { if (fmt == ExportFormat.JPEG) eraseColor(Color.WHITE) }
+private fun Project.canvasBitmap(first: Bitmap?) = createBitmap(width, height, Bitmap.Config.ARGB_8888, true, first?.colorSpace ?: ColorSpace.get(ColorSpace.Named.SRGB))
 
 private fun Bitmap.isFullyOpaque(): Boolean {
     val row = IntArray(width)
@@ -67,12 +67,14 @@ private fun ProjectStore.composite(p: Project, fmt: ExportFormat): Bitmap {
             try {
                 mask = readMask(p, l)
                 patch = readPatch(p, l, bmp)
-                Canvas(out ?: p.canvasBitmap(fmt, bmp).also { out = it }).drawLayer(l, bmp, mask, patch, paints)
+                Canvas(out ?: p.canvasBitmap(bmp).also { out = it }).drawLayer(l, bmp, mask, patch, paints)
             } finally { bmp?.recycle(); mask?.recycle(); patch?.recycle() }
         }
-        return (out ?: p.canvasBitmap(fmt, null)).apply {
+        return (out ?: p.canvasBitmap(null)).apply {
+            // JPEG's white goes under the result: blend modes see only the layers below
+            if (fmt == ExportFormat.JPEG) Canvas(this).drawColor(Color.WHITE, PorterDuff.Mode.DST_OVER)
             // No transparent px → no alpha in the file. Checked by px: hasAlpha is always true for baked layers
-            if (fmt != ExportFormat.JPEG && isFullyOpaque()) setHasAlpha(false)
+            if (fmt == ExportFormat.JPEG || isFullyOpaque()) setHasAlpha(false)
         }
     } catch (e: Throwable) {
         out?.recycle()

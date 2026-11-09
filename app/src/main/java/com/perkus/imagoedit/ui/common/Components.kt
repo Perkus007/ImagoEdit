@@ -9,6 +9,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -29,6 +30,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -47,11 +49,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEvent
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -73,6 +79,7 @@ import androidx.compose.ui.unit.sp
 import com.perkus.imagoedit.R
 import com.perkus.imagoedit.ui.theme.BarBg
 import com.perkus.imagoedit.ui.theme.BtnGray
+import com.perkus.imagoedit.ui.theme.Grey
 import com.perkus.imagoedit.ui.theme.LightFieldBg
 import com.perkus.imagoedit.ui.theme.LightFieldBorder
 import com.perkus.imagoedit.ui.theme.SideBarBg
@@ -89,6 +96,8 @@ private val BUSY_SHADOW_OFFSET = 1.dp
 private val BUSY_SHADOW_BLUR = 2.dp
 const val DISABLED_ALPHA = 0.3f // неактивная кнопка и пункт меню
 private val ITEM_SHAPE = RoundedCornerShape(4.dp)
+private val THUMB_W = 4.dp
+private val THUMB_MIN = 24.dp
 
 @Composable
 fun Bar(modifier: Modifier = Modifier, arrangement: Arrangement.Horizontal = Arrangement.spacedBy(16.dp), content: @Composable RowScope.() -> Unit) = Row(modifier.fillMaxWidth().background(BarBg).height(BAR_H), arrangement, Alignment.CenterVertically, content = content)
@@ -132,8 +141,31 @@ fun MenuItem(text: String, selected: Boolean = false, enabled: Boolean = true, i
     }
 }
 
+/** Read in the draw phase: scrolling doesn't recompose. Rows of one height */
+fun Modifier.scrollbar(s: LazyListState) = drawWithContent {
+    drawContent()
+    val info = s.layoutInfo
+    val row = info.visibleItemsInfo.firstOrNull()?.size?.toFloat() ?: return@drawWithContent
+    drawThumb(s.firstVisibleItemIndex * row + s.firstVisibleItemScrollOffset, row * info.totalItemsCount)
+}
+
+/** Before verticalScroll: over the viewport. Read in the draw phase */
+fun Modifier.scrollbar(s: ScrollState) = drawWithContent {
+    drawContent()
+    drawThumb(s.value.toFloat(), size.height + s.maxValue)
+}
+
+/** A thin thumb at the right edge, not interactive: content [all] px tall scrolled by [scrolled]; all fits → none */
+private fun DrawScope.drawThumb(scrolled: Float, all: Float) {
+    if (all <= size.height) return
+    val w = THUMB_W.toPx()
+    val len = maxOf(size.height * size.height / all, THUMB_MIN.toPx())
+    val y = scrolled / (all - size.height) * (size.height - len)
+    drawRoundRect(Grey, Offset(size.width - w * 1.5f, y.coerceIn(0f, size.height - len)), Size(w, len), CornerRadius(w / 2))
+}
+
 @Composable
-fun BusyOverlay() = Box(Modifier.fillMaxSize().consumeTaps(), Alignment.Center) {
+fun BusyOverlay() =Box(Modifier.fillMaxSize().consumeTaps(), Alignment.Center) {
     val shadow = with(LocalDensity.current) { Shadow(Color.Black, Offset(BUSY_SHADOW_OFFSET.toPx(), BUSY_SHADOW_OFFSET.toPx()), BUSY_SHADOW_BLUR.toPx()) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         CircularProgressIndicator(color = Color.White)
@@ -192,20 +224,26 @@ fun rememberImagePicker(onPicked: (ContentResolver, Uri) -> Unit): () -> Unit {
 fun SliderRow(value: Int, range: IntRange, suffix: String, label: String? = null, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Float) -> Unit) =
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         label?.let { Text(it, Modifier.weight(1f), fontSize = 14.sp, textAlign = TextAlign.End, maxLines = 1) }
-        NumField(value.toString(), Modifier.width(FIELD_W).background(LightFieldBg, FIELD_SHAPE).border(1.dp, LightFieldBorder, FIELD_SHAPE), PaddingValues(4.dp), suffix, fontSize = 16.sp, lineHeight = 16.sp, onApply = onApply)
+        SliderField(value, suffix, onApply)
         AppSlider(value, onChange, range, (if (label != null) Modifier.width(LABELED_SLIDER_W) else Modifier.weight(1f)).height(32.dp), onFinished = onFinished)
     }
+
+/** A slider's number field on a light card; NumPad ✓ → [onApply] */
+@Composable
+fun SliderField(value: Int, suffix: String, onApply: (Float) -> Unit) =
+    NumField(value.toString(), Modifier.width(FIELD_W).background(LightFieldBg, FIELD_SHAPE).border(1.dp, LightFieldBorder, FIELD_SHAPE), PaddingValues(4.dp), suffix, fontSize = 16.sp, lineHeight = 16.sp, onApply = onApply)
 
 /** [gradient] replaces the track; it spans the thumb center's travel: the color under the thumb matches */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AppSlider(value: Int, onChange: (Int) -> Unit, range: IntRange, modifier: Modifier = Modifier, enabled: Boolean = true, onFinished: (() -> Unit)? = null, gradient: Brush? = null) {
+fun AppSlider(value: Int, onChange: (Int) -> Unit, range: IntRange, modifier: Modifier = Modifier, enabled: Boolean = true, onFinished: (() -> Unit)? = null, gradient: Brush? = null,
+    under: Brush? = null) {
     val colors = SliderDefaults.colors(thumbColor = BtnGray, activeTrackColor = BtnGray, inactiveTrackColor = BtnGray)
     Slider(
         value.toFloat(), { onChange(it.roundToInt()) }, modifier, enabled, valueRange = range.first.toFloat()..range.last.toFloat(), onValueChangeFinished = onFinished,
         thumb = { Box(Modifier.size(28.dp).background(if (enabled) colors.thumbColor else colors.disabledThumbColor, CircleShape).border(2.dp, Color.White, CircleShape)) },
         track = {
-            if (gradient != null) Box(Modifier.fillMaxWidth().height(GRADIENT_TRACK_H).background(gradient, CircleShape))
+            if (gradient != null) Box(Modifier.fillMaxWidth().height(GRADIENT_TRACK_H).then(if (under != null) Modifier.background(under, CircleShape) else Modifier).background(gradient, CircleShape))
             else SliderDefaults.Track(it, enabled = enabled, colors = colors, drawStopIndicator = null, thumbTrackGapSize = 0.dp)
         }
     )

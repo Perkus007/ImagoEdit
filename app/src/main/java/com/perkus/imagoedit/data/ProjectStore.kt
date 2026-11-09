@@ -28,11 +28,12 @@ private const val META = "project.json"
 private const val THUMB = "thumb.webp"
 private const val RECOVERY = "recovery.json" // несохранённое состояние, в staging рядом со своими файлами
 
-private fun Layer.toJson() = JSONObject().put("file", file).put("visible", visible).put("x", x).put("y", y).put("w", w).put("h", h).put("opacity", opacity).put("orient", orient).put("mask", mask)
-    .put("patch", patch).put("id", id)
+private fun Layer.toJson() = JSONObject().put("file", file).put("visible", visible).put("x", x).put("y", y).put("w", w).put("h", h).put("opacity", opacity).put("blend", blend.name)
+    .put("orient", orient).put("mask", mask).put("patch", patch).put("id", id)
 
-private fun JSONObject.toLayer() = Layer(optString("file").ifEmpty { null }, optBoolean("visible", true), optInt("x"), optInt("y"), optInt("w"), optInt("h"), optInt("opacity", MAX_OPACITY), optInt("orient"),
-    optString("mask").ifEmpty { null }, optString("patch").ifEmpty { null }, optLong("id", newLayerId()))
+private fun JSONObject.toLayer() = Layer(optString("file").ifEmpty { null }, optBoolean("visible", true), optInt("x"), optInt("y"), optInt("w"), optInt("h"), optInt("opacity", MAX_OPACITY),
+    optString("blend").let { n -> Blend.entries.firstOrNull { it.name == n } } ?: Blend.NORMAL, optInt("orient"), optString("mask").ifEmpty { null }, optString("patch").ifEmpty { null },
+    optLong("id", newLayerId()))
 
 private fun Project.toJson() = JSONObject().put("name", name).put("w", width).put("h", height).put("updated", updated).put("layers", JSONArray(layers.map { it.toJson() }))
 

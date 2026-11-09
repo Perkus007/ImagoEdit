@@ -32,14 +32,17 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.Paint
 import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.withSaveLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -47,6 +50,7 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toOffset
+import com.perkus.imagoedit.data.Blend
 import com.perkus.imagoedit.data.Selection
 import com.perkus.imagoedit.data.TILE
 import com.perkus.imagoedit.data.alphaAt
@@ -111,9 +115,10 @@ enum class Part { Below, Hot, Above }
 
 /** What CanvasView shows; hoisted for the pipette. [size], [layers], [checker] hold the latest composition's values: the color panel may keep its instance */
 @Stable
-class CanvasPicture(private val size: State<IntSize>, private val layers: State<List<Drawn>>, private val levels: State<Levels>, private val preview: OpacityPreview,
+class CanvasPicture(private val size: State<IntSize>, private val layers: State<List<Drawn>>, private val levels: State<Levels>, private val preview: LayerPreview,
     private val checker: State<Brush>, private val strokes: BrushTool) : PipetteSource {
     val vp = Viewport()
+    private val isolated = Paint()
     val canvasW get() = size.value.width
     val canvasH get() = size.value.height
 
@@ -143,19 +148,24 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
                 val l = d.layer
                 val active = place?.takeIf { l.id == it.id }
                 val alpha = active?.alpha ?: preview.alpha(l.id, l.opacity)
+                val blend = preview.blend(l.id, l.blend).mode
                 if (active is TextState) with(active) { drawLive(scale, canvasW, canvasH) }
                 else drawPlaced(d.img, l.fileW, l.fileH, active?.t ?: l.inPlace, scale, canvasW, canvasH, d.img?.let { lv[it.asAndroidBitmap()] }, alpha, l.orient, d.mask, d.patch,
-                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer }, l.id, detail)
-                if (fill != null && l.id == fill.layer) with(fill) { drawPreview(alpha, scale, canvasW, canvasH) }
+                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer }, l.id, detail, blend)
+                if (fill != null && l.id == fill.layer) with(fill) { drawPreview(alpha, blend, scale, canvasW, canvasH) }
             }
         }
     }
+
+    /** A blend mode among [range]: such a layer must see the layers below it, not the checker */
+    fun blends(range: IntRange = layers.value.indices) = range.any { i -> layers.value[i].layer.let { preview.blend(it.id, it.blend) } != Blend.NORMAL }
 
     override fun DrawScope.drawAround(focus: Offset, zoom: Float) {
         val o = focus + (vp.offset - focus) * zoom
         val s = vp.scale * zoom
         drawBoard(o, s)
-        drawLayers(o, s, layers.value.indices)
+        // Own layer (loupe-sized: bounds meet its clip) as on the canvas: blend modes see only the layers
+        drawContext.canvas.withSaveLayer(Rect(o, Size(canvasW * s, canvasH * s)), isolated) { drawLayers(o, s, layers.value.indices) }
     }
 
     /** Visible layers composited under [p] from their own pixels and patches; transparent or off the canvas → null */
@@ -164,7 +174,9 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
         if (c.x < 0f || c.y < 0f || c.x >= canvasW || c.y >= canvasH) return null
         val m = Matrix()
         val pt = FloatArray(2)
-        var r = 0f; var g = 0f; var b = 0f; var a = 0f // premultiplied
+        val src = FloatArray(3)
+        val rgb = FloatArray(3) // premultiplied
+        var a = 0f
         for (d in layers.value) {
             val l = d.layer
             if (!l.fileToCanvas().invert(m)) continue
@@ -177,18 +189,16 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
             val tile = d.patch?.let { it.levels[0][y / TILE * it.cols(0) + x / TILE] }
             val px = Color(tile?.getPixel(x % TILE, y % TILE) ?: d.img?.asAndroidBitmap()?.getPixel(x, y) ?: continue)
             val k = px.alpha * (if (tile == null) d.mask?.alphaAt(x, y) ?: 1f else 1f) * preview.alpha(l.id, l.opacity)
-            r = px.red * k + r * (1 - k)
-            g = px.green * k + g * (1 - k)
-            b = px.blue * k + b * (1 - k)
-            a = k + a * (1 - k)
+            src[0] = px.red; src[1] = px.green; src[2] = px.blue
+            a = preview.blend(l.id, l.blend).over(src, k, rgb, a)
         }
-        // Float error may push a channel past 1: Color() would throw
-        return if (a > 0f) Color((r / a).coerceAtMost(1f), (g / a).coerceAtMost(1f), (b / a).coerceAtMost(1f)) else null
+        // Float error may push a channel out of 0..1: Color() would throw
+        return if (a > 0f) Color((rgb[0] / a).coerceIn(0f, 1f), (rgb[1] / a).coerceIn(0f, 1f), (rgb[2] / a).coerceIn(0f, 1f)) else null
     }
 }
 
 @Composable
-fun rememberCanvasPicture(canvasW: Int, canvasH: Int, layers: List<Drawn>, levels: State<Levels>, preview: OpacityPreview, strokes: BrushTool): CanvasPicture {
+fun rememberCanvasPicture(canvasW: Int, canvasH: Int, layers: List<Drawn>, levels: State<Levels>, preview: LayerPreview, strokes: BrushTool): CanvasPicture {
     val size = rememberUpdatedState(IntSize(canvasW, canvasH))
     val shown = rememberUpdatedState(layers)
     val checker = rememberUpdatedState(rememberCheckerBrush(8.dp))
@@ -279,10 +289,17 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
             // Read only in the draw phase: gestures don't recompose
             .drawBehind { with(picture) { drawBoard(vp.offset, vp.scale) } }
     ) {
-        // Each group its own layer: a stroke, move or opacity preview redraws the hot layer alone, the others stay Offscreen textures (not while zooming, nor empty)
-        for (part in Part.entries) Spacer(Modifier.fillMaxSize()
-            .graphicsLayer { if (part != Part.Hot) compositingStrategy = if (vp.zoomPct == 0 && !picture.range(part, hot).isEmpty()) CompositingStrategy.Offscreen else CompositingStrategy.Auto }
-            .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill) } })
+        // With a blend mode all groups go into one offscreen: it sees only the layers below, not the checker
+        Box(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = if (picture.blends()) CompositingStrategy.Offscreen else CompositingStrategy.Auto }) {
+            // Each group its own layer: a stroke, move or opacity preview redraws the hot layer alone, the others stay Offscreen textures (not while zooming, nor empty,
+            // nor the layers above with a blend mode: their own texture would hide the layers below)
+            for (part in Part.entries) Spacer(Modifier.fillMaxSize()
+                .graphicsLayer {
+                    if (part != Part.Hot) compositingStrategy = if (vp.zoomPct == 0 && picture.range(part, hot).let { !it.isEmpty() && (part == Part.Below || !picture.blends(it)) })
+                        CompositingStrategy.Offscreen else CompositingStrategy.Auto
+                }
+                .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill) } })
+        }
         // Offscreen: the cut-out stays in it
         if (preview != null) Spacer(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind {
             committed.value?.let { with(preview) { drawPreview(it, vp.offset, vp.scale, cw, ch) } }

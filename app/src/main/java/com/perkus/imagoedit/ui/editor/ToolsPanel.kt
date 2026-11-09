@@ -150,7 +150,7 @@ fun ToolsPanel(tool: EnumOption<Tool>, options: ToolOptions, picture: PipetteSou
             Tool.Drawing -> {
                 BrushBtn(options.drawing, popup, onPopup)
                 // Read in the draw phase: follows the sliders without recomposition
-                RoundBtn(null, false, { options.color.value }) { onPopup(colorPopup(options.color, picture, it)) }
+                RoundBtn(null, false, { options.color.value }) { onPopup(colorPopup(options.color, ColorOpacity(options.drawing[BrushParam.Opacity]), picture, it)) }
             }
             Tool.Stamp -> StampPanel(options.stamp, popup, onPopup)
             Tool.Eraser -> BrushBtn(options.eraser, popup, onPopup)

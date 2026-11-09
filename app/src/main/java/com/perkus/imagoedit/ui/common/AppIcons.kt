@@ -12,6 +12,7 @@ private fun svg(d: String, viewBox: Float = 24f, strokeWidth: Float = 0f): Image
     .addPath(pathData = PathParser().parsePathString(d).toNodes(), fill = if (strokeWidth == 0f) SolidColor(Color.Black) else null, stroke = if (strokeWidth > 0f) SolidColor(Color.Black) else null, strokeLineWidth = strokeWidth, strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round)
     .build()
 
+// Many paths are Lucide icons (ISC), some of them Feather-derived (MIT): notices in res/values/licenses.xml
 object AppIcons {
     /** Кнопки интерфейса */
     val Menu = svg("M4 5h16M4 12h16M4 19h16", strokeWidth = 2f)
@@ -66,6 +67,10 @@ object AppIcons {
     val Linear = svg("M4 12h16M3 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M19 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0", strokeWidth = 2f)
     // Радиальный градиент
     val Radial = svg("M3 12a9 9 0 1 0 18 0 9 9 0 1 0 -18 0M11 3a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M12 12h9M11 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0M20 12a1 1 0 1 0 2 0 1 1 0 1 0 -2 0", strokeWidth = 2f)
+    // Наложение
+    val Shuffle = svg(d = "M18 14l4 4-4 4M18 2l4 4-4 4M2 18h1.973a4 4 0 0 0 3.3-1.7l5.454-8.6a4 4 0 0 1 3.3-1.7H22M2 6h1.972a4 4 0 0 1 3.6 2.2M22 18h-6.041a4 4 0 0 1-3.3-1.8l-.359-.45", strokeWidth = 2f)
+    // Солнце
+    val Sun = svg(d = "M12 8a4 4 0 1 0 0 8a4 4 0 1 0 0-8M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41", strokeWidth = 2f)
 
     /** Кнопки инструмента "Move" */
     val Move = svg("M12 2v20M2 12h20M9 5l3-3 3 3M15 19l-3 3-3-3M5 9l-3 3 3 3M19 9l3 3-3 3", strokeWidth = 2f)

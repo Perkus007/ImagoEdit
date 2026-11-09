@@ -1,6 +1,7 @@
 package com.perkus.imagoedit.ui.editor
 
 import android.graphics.Bitmap
+import android.graphics.BlendMode
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
@@ -94,7 +95,7 @@ class Drawn(val layer: Layer, val img: ImageBitmap?, val mask: LayerMask?, val p
 (live strokes, Transition's preview) for Layer.id [key]. No AA (the edge follows the pixel grid, as baked) except turned plain pixels: a stair-stepped slanted edge would
 flicker while dragged. [detail] < 1 picks coarser copies: fewer texels to read */
 fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransform, s: Float, canvasW: Int, canvasH: Int, levels: List<ImageBitmap>? = null, alpha: Float = 1f, orient: Int = 0,
-    mask: LayerMask? = null, patch: Tiles? = null, overlay: MaskOverlay? = null, key: Long = 0L, detail: Float = 1f) {
+    mask: LayerMask? = null, patch: Tiles? = null, overlay: MaskOverlay? = null, key: Long = 0L, detail: Float = 1f, blend: BlendMode = BlendMode.SRC_OVER) {
     if (img == null && patch == null && overlay == null) return
     val b = t.box
     // Screen px per file px, from the visible part; sizes after orientation
@@ -117,7 +118,7 @@ fun DrawScope.drawPlaced(img: ImageBitmap?, fw: Int, fh: Int, t: ContentTransfor
             paints.image.isAntiAlias = mask == null && patch == null && !t.axisAligned
             // A smaller copy is stretched over the file's px
             drawContext.canvas.nativeCanvas.drawMasked(img?.let { pickLevel(it, levels, k).asAndroidBitmap() }, fw, fh, mask, patch, k, (alpha * 255).roundToInt(), filtered(minOf(kx, ky)),
-                paints, overlay, key)
+                paints, overlay, key, blend)
         }
     }
 }

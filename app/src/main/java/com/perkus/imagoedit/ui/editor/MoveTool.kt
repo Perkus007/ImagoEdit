@@ -82,6 +82,9 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
 
     fun nudge(dx: Float, dy: Float) = edit { t = t.copy(cx = t.cx + dx, cy = t.cy + dy) }
 
+    /** One step on finish */
+    fun slideOpacity(v: Int) = hold { opacity = v }
+
     // Flip around screen axes: the frame mirrors (angle negates), pixels via the flag
     fun flipH() = edit { t = t.copy(angle = norm(-t.angle), flipH = !t.flipH) }
     fun flipV() = edit { t = t.copy(angle = norm(-t.angle), flipV = !t.flipV) }

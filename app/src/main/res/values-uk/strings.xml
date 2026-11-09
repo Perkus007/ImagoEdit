@@ -41,6 +41,17 @@
     <string name="duplicate_layer">Дублікат вибраного шару</string>
     <string name="layer_from_selection">Шар із виділення</string>
     <string name="opacity">Непрозорість</string>
+    <string name="blend_mode">Режим накладання</string>
+    <string name="blend_normal">Звичайний</string>
+    <string name="blend_darken">Затемнення</string>
+    <string name="blend_multiply">Множення</string>
+    <string name="blend_lighten">Заміна світлим</string>
+    <string name="blend_screen">Екран</string>
+    <string name="blend_overlay">Перекриття</string>
+    <string name="blend_soft_light">М\'яке світло</string>
+    <string name="blend_difference">Різниця</string>
+    <string name="blend_exclusion">Виключення</string>
+    <string name="blend_color">Кольоровість</string>
     <string name="merging_layers">Об\'єднання шарів</string>
     <string name="merge_all_layers">Об\'єднати всі шари</string>
     <string name="merge_visible_layers">Об\'єднати видимі шари</string>

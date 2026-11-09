@@ -95,7 +95,7 @@ private const val COPYRIGHT = "© 2026 Perkus"
 private const val LICENSE_NAME = "GPL-3.0-or-later"
 private const val LICENSE_URL = "https://www.gnu.org/licenses/gpl-3.0.html"
 
-// Third-party code and fonts in the APK: their notices ship with the binary (texts: res/values/licenses.xml)
+// Third-party code, fonts and icons in the APK: their notices ship with the binary (texts: res/values/licenses.xml)
 private val NOTICES = listOf(
     "libjpeg-turbo" to R.string.notice_libjpeg_turbo,
     "libwebp, libyuv" to R.string.notice_bsd3,
@@ -104,6 +104,7 @@ private val NOTICES = listOf(
     "avif-coder" to R.string.notice_avif_coder,
     "Eigen" to R.string.notice_eigen,
     "Fonts: Caveat, Handjet, Tiny5" to R.string.notice_ofl,
+    "Icons: Lucide, Feather" to R.string.notice_lucide,
     "AndroidX, Jetpack Compose, Kotlin, kotlinx.coroutines; Rust: std, tealdust, maroontree, hpvca, hpvcd, pic-scale, yuv, moxcms, gainforge, bytemuck, num-traits, thiserror, anyhow, libc, log, jni, ndk-sys; font: Roboto Slab" to R.string.notice_apache
 )
 private val NOTICES_W = 600.dp

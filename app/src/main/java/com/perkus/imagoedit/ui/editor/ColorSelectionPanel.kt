@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -25,6 +26,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
@@ -58,6 +60,9 @@ import androidx.compose.ui.unit.sp
 import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
 import com.perkus.imagoedit.data.FloatOption
+import com.perkus.imagoedit.data.IntOption
+import com.perkus.imagoedit.data.MAX_OPACITY
+import com.perkus.imagoedit.data.toOpacity
 import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.AppSlider
 import com.perkus.imagoedit.ui.common.LocalFrame
@@ -65,6 +70,7 @@ import com.perkus.imagoedit.ui.common.NumField
 import com.perkus.imagoedit.ui.common.consumeTaps
 import com.perkus.imagoedit.ui.common.plainClickable
 import com.perkus.imagoedit.ui.common.rememberBounds
+import com.perkus.imagoedit.ui.common.rememberCheckerBrush
 import com.perkus.imagoedit.ui.common.trackBounds
 import com.perkus.imagoedit.ui.theme.BarBg
 import com.perkus.imagoedit.ui.theme.ScreenBg
@@ -134,16 +140,22 @@ class ColorOptions(private val settings: AppSettings, private val key: String) {
     }
 }
 
-/** Slides up to the host Box's bottom on opening, down on closing (ToolPopover) */
-fun colorPopup(o: ColorOptions, source: PipetteSource, anchor: Rect): OpenPopup {
-    val shown = MutableTransitionState(false).apply { targetState = true }
-    return OpenPopup(ToolPopup.Color, anchor, shown) { ColorSelectionPanel(o, source, shown) }
+/** The tool's own opacity, % (0..MAX_OPACITY), shown by the panel: [slide] while dragging, then [finish] — one change */
+class ColorOpacity(val value: () -> Int, val finish: () -> Unit = {}, val slide: (Int) -> Unit) {
+    constructor(o: IntOption) : this({ o.value }, slide = { o.value = it })
 }
 
-/** The mode resets to the palette on each opening. Pipette: press its button and slide onto the picture — the loupe follows, release picks the color */
+/** Slides up to the host Box's bottom on opening, down on closing (ToolPopover) */
+fun colorPopup(o: ColorOptions, opacity: ColorOpacity, source: PipetteSource, anchor: Rect): OpenPopup {
+    val shown = MutableTransitionState(false).apply { targetState = true }
+    return OpenPopup(ToolPopup.Color, anchor, shown) { ColorSelectionPanel(o, opacity, source, shown) }
+}
+
+/** The mode resets to the palette, the third slider to brightness on each opening. Pipette: press its button and slide onto the picture — the loupe follows, release picks the color */
 @Composable
-private fun ColorSelectionPanel(o: ColorOptions, source: PipetteSource, shown: MutableTransitionState<Boolean>) {
+private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity, source: PipetteSource, shown: MutableTransitionState<Boolean>) {
     var sliders by remember { mutableStateOf(false) }
+    val showOpacity = remember { mutableStateOf(false) } // in place of brightness
     var picking by remember { mutableStateOf(false) }
     val at = remember { mutableStateOf(Offset.Zero) } // read only in layout and draw
     val bounds = rememberBounds()
@@ -153,7 +165,7 @@ private fun ColorSelectionPanel(o: ColorOptions, source: PipetteSource, shown: M
     AnimatedVisibility(shown, Modifier.fillMaxSize().wrapContentSize(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) {
         // Hidden, not removed while picking: leaving composition would cancel the gesture
         Row(Modifier.alpha(if (picking) 0f else 1f).size(PANEL_W, PANEL_H).clip(SmallShape).background(BarBg).consumeTaps().padding(GAP), Arrangement.spacedBy(GAP)) {
-            Box(Modifier.weight(1f)) { if (sliders) Sliders(o) else Palette(o) }
+            Box(Modifier.weight(1f)) { if (sliders) Sliders(o, opacity, showOpacity) else Palette(o) }
             Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                 // Not clickable: its tap detector would consume the down first
                 Box(Modifier.size(CELL).trackBounds(bounds).pointerInput(o, source, host) {
@@ -198,24 +210,48 @@ private fun Palette(o: ColorOptions) = Column(verticalArrangement = Arrangement.
 @Composable
 private fun Swatch(c: Color, onClick: () -> Unit) = Box(Modifier.size(CELL).colorFill(c).plainClickable(onClick))
 
-private class ColorLine(val label: Int, val option: FloatOption, val suffix: String, val gradient: Brush)
+/** [set] while dragging or typed, then [finish] */
+private class ColorLine(val value: Int, val max: Int, val suffix: String, val gradient: Brush, val under: Brush? = null, val finish: () -> Unit = {}, val set: (Float) -> Unit) {
+    constructor(o: FloatOption, suffix: String, gradient: Brush) : this(o.value.roundToInt(), o.range.endInclusive.roundToInt(), suffix, gradient, set = { o.value = it })
+}
 
-/** Columns: the sliders start at one x whatever the label lengths */
 @Composable
-private fun Sliders(o: ColorOptions) = Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
-    Box(Modifier.size(WIDE, CELL).colorFill(o.value))
+private fun Label(text: Int, color: Color = Color.White) = Text(stringResource(text), LINE, color, fontSize = 14.sp, maxLines = 1)
+
+/** Columns: the sliders start at one x whatever the label lengths. [showOpacity] — the third row is the tool's opacity in place of brightness */
+@Composable
+private fun Sliders(o: ColorOptions, opacity: ColorOpacity, showOpacity: MutableState<Boolean>) = Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
+    var a by showOpacity
+    val c = o.value
+    Column(Modifier.fillMaxHeight(), Arrangement.SpaceBetween) {
+        Box(Modifier.size(WIDE, CELL).colorFill(c))
+        Row(Modifier.size(WIDE, CELL).background(Color.White, SmallShape).plainClickable { a = !a }.padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+            Icon(if (a) AppIcons.Sun else AppIcons.Opacity, null, Modifier.size(24.dp), Color.Black)
+            Icon(AppIcons.ArrowRightLeft, null, Modifier.size(24.dp), Color.Black)
+        }
+    }
     val pure = Color.hsv(o.hue.value, 1f, 1f)
+    val checker = rememberCheckerBrush()
     val lines = listOf(
-        ColorLine(R.string.color_hue, o.hue, "°", HUE_TRACK),
-        ColorLine(R.string.color_saturation, o.sat, "%", Brush.horizontalGradient(listOf(Color.White, pure))),
-        ColorLine(R.string.color_brightness, o.bright, "%", Brush.horizontalGradient(listOf(Color.Black, pure)))
+        ColorLine(o.hue, "°", HUE_TRACK),
+        ColorLine(o.sat, "%", Brush.horizontalGradient(listOf(Color.White, pure))),
+        if (a) ColorLine(opacity.value(), MAX_OPACITY, "%", Brush.horizontalGradient(listOf(c.copy(alpha = 0f), c)), checker, opacity.finish) { opacity.slide(it.toOpacity()) }
+        else ColorLine(o.bright, "%", Brush.horizontalGradient(listOf(Color.Black, pure)))
     )
-    Column(verticalArrangement = Arrangement.spacedBy(GAP)) { lines.forEach { Text(stringResource(it.label), LINE, Color.White, fontSize = 14.sp, maxLines = 1) } }
     Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
-        lines.forEach { l -> NumField(l.option.value.roundToInt().toString(), LINE.width(FIELD_W).background(ScreenBg, SmallShape), PaddingValues(vertical = 4.dp), l.suffix, Color.White, 14.sp) { l.option.value = it } }
+        Label(R.string.color_hue)
+        Label(R.string.color_saturation)
+        // Both measured: the sliders don't shift on the swap
+        Box {
+            Label(R.string.color_brightness, if (a) Color.Transparent else Color.White)
+            Label(R.string.opacity, if (a) Color.White else Color.Transparent)
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
+        lines.forEach { l -> NumField(l.value.toString(), LINE.width(FIELD_W).background(ScreenBg, SmallShape), PaddingValues(vertical = 4.dp), l.suffix, Color.White, 14.sp) { l.set(it); l.finish() } }
     }
     Column(Modifier.weight(1f), Arrangement.spacedBy(GAP)) {
-        lines.forEach { l -> AppSlider(l.option.value.roundToInt(), { l.option.value = it.toFloat() }, 0..l.option.range.endInclusive.roundToInt(), Modifier.fillMaxWidth().height(CELL), gradient = l.gradient) }
+        lines.forEach { l -> AppSlider(l.value, { l.set(it.toFloat()) }, 0..l.max, Modifier.fillMaxWidth().height(CELL), onFinished = l.finish, gradient = l.gradient, under = l.under) }
     }
 }
 

@@ -41,6 +41,17 @@
     <string name="duplicate_layer">Duplicate layer</string>
     <string name="layer_from_selection">Layer from selection</string>
     <string name="opacity">Opacity</string>
+    <string name="blend_mode">Blend mode</string>
+    <string name="blend_normal">Normal</string>
+    <string name="blend_darken">Darken</string>
+    <string name="blend_multiply">Multiply</string>
+    <string name="blend_lighten">Lighten</string>
+    <string name="blend_screen">Screen</string>
+    <string name="blend_overlay">Overlay</string>
+    <string name="blend_soft_light">Soft Light</string>
+    <string name="blend_difference">Difference</string>
+    <string name="blend_exclusion">Exclusion</string>
+    <string name="blend_color">Color</string>
     <string name="merging_layers">Merging layers</string>
     <string name="merge_all_layers">Merge all layers</string>
     <string name="merge_visible_layers">Merge visible layers</string>

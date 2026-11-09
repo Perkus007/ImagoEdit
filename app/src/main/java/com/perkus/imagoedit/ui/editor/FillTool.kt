@@ -1,5 +1,6 @@
 package com.perkus.imagoedit.ui.editor
 
+import android.graphics.BlendMode
 import android.graphics.Paint
 import android.graphics.Rect
 import androidx.compose.animation.AnimatedVisibility
@@ -27,6 +28,7 @@ import com.perkus.imagoedit.data.EnumOption
 import com.perkus.imagoedit.data.Figure
 import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.data.Layer
+import com.perkus.imagoedit.data.MAX_OPACITY
 import com.perkus.imagoedit.data.Selection
 import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.StrokeSide
@@ -53,6 +55,7 @@ private val StrokeSide.icon
 @Stable
 class FillOptions(settings: AppSettings) {
     val color = ColorOptions(settings, "fill.color")
+    val opacity = IntOption(settings, "fill.opacity", 0..MAX_OPACITY, MAX_OPACITY)
     val mode = EnumOption(settings, "fill.mode", FillMode.entries, FillMode.Fill)
     val width = IntOption(settings, "fill.width", 0..MAX_WIDTH, DEFAULT_WIDTH)
     val side = EnumOption(settings, "fill.side", StrokeSide.entries, StrokeSide.Inside)
@@ -86,10 +89,12 @@ class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val
     private val stroked by derivedStateOf { options.width.value.takeIf { it > 0 }?.let { Figure(outline, options.side.value, it.toFloat(), sharp) } }
 
     /** null — nothing. A fill covers the canvas, the selection limits it */
-    fun stroke(): Stroke? = (if (fill) Figure(canvas) else stroked)?.let { Stroke(layer, file, options.color.value.toArgb(), area = sel.takeIf { fill }, figure = it) }
+    fun stroke(): Stroke? = (if (fill) Figure(canvas) else stroked)?.let {
+        Stroke(layer, file, options.color.value.toArgb(), opacity = options.opacity.value / MAX_OPACITY.toFloat(), area = sel.takeIf { fill }, figure = it)
+    }
 
-    /** Over its layer, within the canvas; options read in the draw phase */
-    fun DrawScope.drawPreview(alpha: Float, scale: Float, cw: Int, ch: Int) {
+    /** Over its layer as the layer blends, within the canvas; options read in the draw phase */
+    fun DrawScope.drawPreview(alpha: Float, blend: BlendMode, scale: Float, cw: Int, ch: Int) {
         val f = sel?.feather?.takeIf { fill }
         val s = if (fill) filled else stroked ?: return
         val c = drawContext.canvas.nativeCanvas
@@ -97,7 +102,8 @@ class FillTool(l: Layer, val options: FillOptions, cw: Int, ch: Int, private val
         c.scale(scale, scale)
         c.clipRect(0, 0, cw, ch)
         paint.color = options.color.value.toArgb()
-        paint.alpha = (alpha * 255).roundToInt()
+        paint.alpha = (alpha * options.opacity.value / MAX_OPACITY * 255).roundToInt()
+        paint.blendMode = blend
         // A fill's edges are whole px, shown unsmoothed as layers and checker are: AA would let them through along the canvas edge
         paint.isAntiAlias = !fill
         if (f != null) f.draw(c, paint) else s.draw(c, paint)
@@ -116,7 +122,7 @@ fun FillOverlay(s: FillTool, picture: PipetteSource, open: ToolPopup?, onPopup: 
         val stroke = o.mode.value == FillMode.Stroke
         BottomPanel(stroke, null, Modifier, buttons = {
             // Read in the draw phase: follows the color panel live
-            RoundBtn(null, false, { o.color.value }, Modifier, BTN) { onPopup(colorPopup(o.color, picture, it)) }
+            RoundBtn(null, false, { o.color.value }, Modifier, BTN) { onPopup(colorPopup(o.color, ColorOpacity(o.opacity), picture, it)) }
             FillMode.entries.forEach { m -> ToggleBtn(m.icon, m == o.mode.value) { o.mode.value = m } }
             // While filling none shows chosen; the side stays saved
             StrokeSide.entries.forEach { d -> ToggleBtn(d.icon, stroke && d == o.side.value, enabled = stroke) { o.setSide(d) } }
