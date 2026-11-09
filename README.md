@@ -7,7 +7,7 @@ A layer-based raster image editor for Android.
 It works fully offline: no ads, no analytics, no internet permission.
 
 - Up to 100 MP canvases, 16 000 px per side.
-- Layers, selections, drawing, clone stamp, healing brush, eraser, blur brush, text, opacity transition.
+- Layers with blend modes, selections, drawing, clone stamp, healing brush, eraser, blur brush, text, opacity transition.
 - Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders.
 - Projects live in folder on the device and stay there when the app is uninstalled.
 - Project autosave.
@@ -51,6 +51,8 @@ It works fully offline: no ads, no analytics, no internet permission.
 ### Layers
 - Add an empty layer, duplicate a layer or make a layer from the selection.
 - Show/hide, reorder, opacity 0–100 %, delete.
+- Blend modes: Normal, Darken, Multiply, Lighten, Screen, Overlay, Soft Light, Difference, Exclusion, Color.
+  They work the same on the canvas, in merged layers and in exported images.
 - Merge with the previous layer, merge visible layers or merge all layers.
 - **Add image** puts a photo onto a new layer and opens the Move tool on it.
 
