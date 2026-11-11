@@ -135,9 +135,15 @@ fun SnapHistoryButtons(s: CanvasTool<*>) {
 
 @Composable
 fun ConfirmButtons(onCancel: () -> Unit, onConfirm: () -> Unit) {
-    ToolBtn(AppIcons.Cancel, bg = Red, onClick = onCancel)
-    ToolBtn(AppIcons.Check, bg = BtnGreen, onClick = onConfirm)
+    CancelBtn(onCancel)
+    ConfirmBtn(onConfirm)
 }
+
+@Composable
+fun CancelBtn(onClick: () -> Unit) = ToolBtn(AppIcons.Cancel, bg = Red, onClick = onClick)
+
+@Composable
+fun ConfirmBtn(onClick: () -> Unit) = ToolBtn(AppIcons.Check, bg = BtnGreen, onClick = onClick)
 
 /** X, Y — the bounds' top-left; W, H — the frame's sides */
 @Composable
@@ -162,8 +168,9 @@ fun ToolBtn(icon: ImageVector, tint: Color = Color.White, bg: Color = Color.Tran
 
 /** [on]: a black icon on white */
 @Composable
-fun ToggleBtn(icon: ImageVector, on: Boolean, modifier: Modifier = Modifier, indication: Indication? = LocalIndication.current, enabled: Boolean = true, onClick: () -> Unit) =
-    ToolBtn(icon, if (on) Color.Black else Color.White, if (on) Color.White else Color.Transparent, enabled, modifier = modifier, indication = indication, onClick = onClick)
+fun ToggleBtn(icon: ImageVector, on: Boolean, modifier: Modifier = Modifier, indication: Indication? = LocalIndication.current, enabled: Boolean = true,
+    rotation: () -> Float = { 0f }, onClick: () -> Unit) =
+    ToolBtn(icon, if (on) Color.Black else Color.White, if (on) Color.White else Color.Transparent, enabled, rotation, modifier, indication, onClick)
 
 private fun fmt(v: Float): String {
     val r = (v * 100).roundToInt() / 100f
@@ -183,10 +190,11 @@ fun PanelField(value: Float, label: @Composable () -> Unit, suffix: String = "",
 
 /** [label], field (NumPad ✓ → [onApply]) and slider ([onChange], released → [onFinished]) */
 @Composable
-fun PxSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
+fun PanelSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, suffix: String = "px", onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit,
+    onApply: (Int) -> Unit) =
     Row(modifier, Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
         label()
-        PanelField(value.toFloat(), {}, "px") { onApply(it.roundToInt()) }
+        PanelField(value.toFloat(), {}, suffix) { onApply(it.roundToInt()) }
         AppSlider(value, onChange, range, Modifier.weight(1f).height(32.dp), onFinished = onFinished)
     }
 
@@ -199,7 +207,7 @@ fun RowScope.PopoverSlider(label: AnnotatedString, value: Int, range: IntRange, 
     }
 
 @Composable
-fun FieldText(text: String) = Text(text, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+fun FieldText(text: String, color: Color = Color.White) = Text(text, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)
 
 @Composable
 fun FieldIcon(icon: ImageVector, modifier: Modifier = Modifier) = Icon(icon, null, modifier.size(20.dp), Color.White)

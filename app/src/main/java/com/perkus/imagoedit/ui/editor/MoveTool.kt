@@ -136,6 +136,23 @@ class MoveState(val layer: Int, id: Long, cw: Int, ch: Int, private val initial:
     PlaceState<Pair<ContentTransform, Int>>(id, cw, ch, initial, initialOpacity) {
     val changed get() = t != initial || opacity != initialOpacity
 
+    private var fitted: ContentTransform? = null // the last fit: rounding makes a refit of it unstable, so it's compared as is
+
+    /** [w]×[h] centered, the bounds' left/top on whole px (as center snapping) */
+    private fun centered(w: Float, h: Float): ContentTransform {
+        val b = t.copy(cx = 0f, cy = 0f, w = w, h = h).bounds()
+        return t.copy(cx = (cw / 2f + b.left).roundToInt() - b.left, cy = (ch / 2f + b.top).roundToInt() - b.top, w = w, h = h)
+    }
+
+    /** The bounds fit into the canvas, sides on whole px; on the last fit — the original size. Both centered, angle and flips kept */
+    override fun doubleTap() = hold {
+        t = if (t == fitted) centered(initial.w, initial.h) else {
+            val b = t.bounds()
+            val k = minOf(cw / b.width(), ch / b.height())
+            centered((t.w * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE), (t.h * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE)).also { fitted = it }
+        }
+    }
+
     override var step: Pair<ContentTransform, Int>
         get() = t to opacity
         set(v) {

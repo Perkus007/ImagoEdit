@@ -222,4 +222,4 @@ fun TransformOverlay(s: TransformState, onCancel: () -> Unit, onConfirm: () -> U
 /** One edge value: [label], field and slider; [set] — the edge with it */
 @Composable
 private fun EdgeSlider(s: TransformState, label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, set: Edge.(Int) -> Edge) =
-    PxSlider(label, value, range, modifier, s::finish, { s.slideEdge(s.edge.set(it)) }) { s.edgeTo(s.edge.set(it)) }
+    PanelSlider(label, value, range, modifier, onFinished = s::finish, onChange = { s.slideEdge(s.edge.set(it)) }) { s.edgeTo(s.edge.set(it)) }

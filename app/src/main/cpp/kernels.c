@@ -1,4 +1,6 @@
-// Pixel loops of brush strokes (Stroke.kt Dab: visits) and of the Finger smudge (Blur.kt Smear.dab); Kotlin side — Kernels.kt
+// Pixel loops of brush strokes (Stroke.kt Dab: visits), of the Finger smudge (Blur.kt Smear.dab), of Replace color and of Shadows/Highlights
+// (Correction.kt); Kotlin side — Kernels.kt
+#include <android/bitmap.h>
 #include <jni.h>
 #include <math.h>
 #include <stdint.h>
@@ -118,4 +120,586 @@ JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_smear(JNIEnv* env,
     FREE(fp, f, 0);
     FREE(acc, a, 0);
     FREE(profile, m, JNI_ABORT);
+}
+
+/* Replace color, in Oklab (perceptually even). Px within the threshold's distance of a sample are replaced fully, a soft rim past it partly. Each sample on
+its own (`from`): in linear light a px lighter than from is from mixed with white (added light: highlights, anti-aliasing, noise), a darker one — from dimmed
+(a shade); it becomes `to` mixed or dimmed the same part — no more than its perceived room allows, so dark noise doesn't become spots on a light `to`. What's left
+of the px off that model (its own hue, chroma) is turned and scaled as from's chroma into to's, as much light as it was. Where several samples reach a px, their
+results are mixed by how fully each replaces it: no seam between their areas. A translucent `to` also takes the sample's share out of the px (un-mixing): no
+fringe of it stays on the edges */
+#define LIN_MAX 16383 /* steps of the linear → sRGB table: each well under half an 8-bit level */
+#define SHADE 0.5f /* weight of lightness and chroma differences in the distance (shades, paler or deeper tints of from); a hue difference counts fully */
+#define R_MAX 0.5f /* fully replaced radius at threshold 100%: about black to white */
+#define RIM 0.5f /* the soft rim past it, of its radius */
+#define R_MIN 0.001f /* the rim at threshold 0: from alone (a neighboring 8-bit level lies ~0.002 off) */
+#define M_MAX 2.f /* most a chroma difference grows by */
+#define C_REF 0.04f /* chroma from which from's hue counts; below it from is near gray and chroma differences are kept as they are */
+#define CACHE_BITS 12
+#define SAMPLES 5 /* most samples: Correction.kt SAMPLES */
+
+static float LIN[256]; /* sRGB byte → linear */
+static uint8_t SRGB[LIN_MAX + 1]; /* linear × LIN_MAX → sRGB byte */
+static uint32_t UNPREMUL[256]; /* 255·2¹⁶ / alpha */
+
+__attribute__((constructor)) static void tables(void) {
+    for (int i = 0; i < 256; i++) {
+        float c = i / 255.f;
+        LIN[i] = c <= 0.04045f ? c / 12.92f : powf((c + 0.055f) / 1.055f, 2.4f);
+        UNPREMUL[i] = i ? (255u * 65536u + i / 2) / i : 0;
+    }
+    for (int i = 0; i <= LIN_MAX; i++) {
+        float l = (float) i / LIN_MAX;
+        SRGB[i] = (uint8_t) ((l <= 0.0031308f ? l * 12.92f : 1.055f * powf(l, 1 / 2.4f) - 0.055f) * 255.f + 0.5f);
+    }
+}
+
+/* Two Halley steps from the bit-trick guess: float-exact, several times faster than cbrtf */
+static inline float cube_root(float x) {
+    if (!(x > 0.f)) return 0.f;
+    union { float f; uint32_t i; } u = { x };
+    u.i = u.i / 3 + 709921077u;
+    float y = u.f;
+    for (int n = 0; n < 2; n++) {
+        float y3 = y * y * y;
+        y *= (y3 + 2.f * x) / (2.f * y3 + x);
+    }
+    return y;
+}
+
+static inline void oklab(const float* rgb, float* lab) {
+    float l = cube_root(0.4122214708f * rgb[0] + 0.5363325363f * rgb[1] + 0.0514459929f * rgb[2]);
+    float m = cube_root(0.2119034982f * rgb[0] + 0.6806995451f * rgb[1] + 0.1073969566f * rgb[2]);
+    float s = cube_root(0.0883024619f * rgb[0] + 0.2817188376f * rgb[1] + 0.6299787005f * rgb[2]);
+    lab[0] = 0.2104542553f * l + 0.7936177850f * m - 0.0040720468f * s;
+    lab[1] = 1.9779984951f * l - 2.4285922050f * m + 0.4505937099f * s;
+    lab[2] = 0.0259040371f * l + 0.7827717662f * m - 0.8086757660f * s;
+}
+
+static inline void linear(const float* lab, float* rgb) {
+    float l = lab[0] + 0.3963377774f * lab[1] + 0.2158037573f * lab[2];
+    float m = lab[0] - 0.1055613458f * lab[1] - 0.0638541728f * lab[2];
+    float s = lab[0] - 0.0894841775f * lab[1] - 1.2914855480f * lab[2];
+    l = l * l * l;
+    m = m * m * m;
+    s = s * s * s;
+    rgb[0] = 4.0767416621f * l - 3.3077115913f * m + 0.2309699292f * s;
+    rgb[1] = -1.2684380046f * l + 2.6097574011f * m - 0.3413193965f * s;
+    rgb[2] = -0.0041960863f * l - 0.7034186147f * m + 1.7076147010f * s;
+}
+
+/* Into 0..1 toward its own gray: luminance and hue kept, chroma lost */
+static inline void into_gamut(float* c) {
+    float y = 0.2126f * c[0] + 0.7152f * c[1] + 0.0722f * c[2], f = 1.f;
+    y = y < 0.f ? 0.f : y > 1.f ? 1.f : y;
+    for (int i = 0; i < 3; i++) {
+        if (c[i] > 1.f) f = fminf(f, (1.f - y) / (c[i] - y));
+        else if (c[i] < 0.f) f = fminf(f, y / (y - c[i]));
+    }
+    if (f < 1.f) for (int i = 0; i < 3; i++) c[i] = y + f * (c[i] - y);
+}
+
+static inline uint32_t srgb(float c) { return SRGB[(int) ((c < 0.f ? 0.f : c > 1.f ? 1.f : c) * LIN_MAX + 0.5f)]; }
+
+static inline float luma(const float* rgb) { return 0.2126f * rgb[0] + 0.7152f * rgb[1] + 0.0722f * rgb[2]; }
+
+/* Oklab L with its toe (Ottosson's Lr): perceived lightness near black as CIELAB's — plain L there is far too steep */
+static inline float toe(float l) {
+    const float k1 = 0.206f, k2 = 0.03f, k3 = (1.f + k1) / (1.f + k2);
+    float x = k3 * l - k1;
+    return 0.5f * (x + sqrtf(x * x + 4.f * k2 * k3 * l));
+}
+
+static inline void linear_of(jint argb, float* rgb) {
+    rgb[0] = LIN[(argb >> 16) & 0xFF];
+    rgb[1] = LIN[(argb >> 8) & 0xFF];
+    rgb[2] = LIN[argb & 0xFF];
+}
+
+typedef struct {
+    float s[3], sl[3], c; /* Oklab, linear, chroma */
+    float ys, up, down; /* luminance; how much of a px' mixing with white (up) or dimming (down) `to` takes: to's perceived room / the sample's, ≤ 1 */
+    float m[2]; /* chroma differences × m (complex: turned and scaled) */
+} Sample;
+
+typedef struct {
+    Sample f[SAMPLES];
+    int n;
+    float t[3], tl[3]; /* to: Oklab, linear */
+    float core, rim, amount, opacity; /* core — fully replaced distance */
+} Swap;
+
+/* from: n (1..SAMPLES) samples */
+static void swap_init(Swap* w, const jint* from, int n, jint to, float opacity, float threshold, float amount) {
+    linear_of(to, w->tl);
+    oklab(w->tl, w->t);
+    const float* t = w->t;
+    float rt = toe(t[0]);
+    w->n = n;
+    for (int k = 0; k < n; k++) {
+        Sample* f = &w->f[k];
+        linear_of(from[k], f->sl);
+        oklab(f->sl, f->s);
+        const float* s = f->s;
+        float c2 = s[1] * s[1] + s[2] * s[2], mr = 1.f, mi = 0.f;
+        f->c = sqrtf(c2);
+        if (c2 > 0.f) {
+            float er = (t[1] * s[1] + t[2] * s[2]) / c2, ei = (t[2] * s[1] - t[1] * s[2]) / c2, e = sqrtf(er * er + ei * ei);
+            if (e > M_MAX) {
+                er *= M_MAX / e;
+                ei *= M_MAX / e;
+            }
+            float x = fminf(f->c / C_REF, 1.f), b = x * x * (3.f - 2.f * x);
+            mr += b * (er - mr);
+            mi = b * ei;
+        }
+        f->m[0] = mr;
+        f->m[1] = mi;
+        float rs = toe(s[0]);
+        f->ys = luma(f->sl);
+        f->up = rt < 1.f ? fminf((1.f - rs) / (1.f - rt), 1.f) : 1.f;
+        f->down = rt > 0.f ? fminf(rs / rt, 1.f) : 1.f;
+    }
+    w->core = threshold * threshold * R_MAX;
+    w->rim = w->core * RIM + R_MIN;
+    w->amount = amount;
+    w->opacity = opacity;
+}
+
+/* Px c (premultiplied RGBA, alpha a > 0): linear p */
+static inline void unpremul(uint32_t c, uint32_t a, float* p) {
+    for (int i = 0; i < 3; i++) {
+        uint32_t v = (((c >> (8 * i)) & 0xFF) * UNPREMUL[a] + 32768) >> 16;
+        p[i] = LIN[v > 255 ? 255 : v];
+    }
+}
+
+/* Linear p (0..1) at alpha a > 0: a premultiplied RGBA px */
+static inline uint32_t pack(const float* p, uint32_t a) {
+    uint32_t out = a << 24;
+    for (int i = 0; i < 3; i++) out |= ((srgb(p[i]) * a + 127) / 255) << (8 * i);
+    return out;
+}
+
+/* Px c (premultiplied RGBA, alpha a > 0): linear p and Oklab lab */
+static inline void unpack(uint32_t c, uint32_t a, float* p, float* lab) {
+    unpremul(c, a, p);
+    oklab(p, lab);
+}
+
+/* How fully a px of Oklab lab is replaced by each sample, 0..1, into k; returns the most. The distance: ΔL, ΔC weighed by SHADE, ΔH² = Δa² + Δb² − ΔC² */
+static float weigh(const Swap* w, const float* lab, float* k) {
+    float cl = sqrtf(lab[1] * lab[1] + lab[2] * lab[2]), reach = w->core + w->rim, most = 0.f;
+    for (int j = 0; j < w->n; j++) {
+        const Sample* f = &w->f[j];
+        float dl = lab[0] - f->s[0], da = lab[1] - f->s[1], db = lab[2] - f->s[2], dc = cl - f->c;
+        float dist2 = SHADE * SHADE * (dl * dl + dc * dc) + fmaxf(da * da + db * db - dc * dc, 0.f), x = (sqrtf(dist2) - w->core) / w->rim;
+        k[j] = dist2 >= reach * reach ? 0.f : x > 0.f ? 1.f - x * x * (3.f - 2.f * x) : 1.f;
+        most = fmaxf(most, k[j]);
+    }
+    return most;
+}
+
+/* Px c (premultiplied RGBA) swapped */
+static uint32_t swap(const Swap* w, uint32_t c) {
+    uint32_t a = c >> 24;
+    if (!a) return c;
+    float p[3], lab[3], ks[SAMPLES], q[3] = { 0.f }, under[3] = { 0.f }, o[3], sum = 0.f; /* under — the samples' share in the px, mixed as q */
+    unpack(c, a, p, lab);
+    float k = weigh(w, lab, ks) * w->amount, y = luma(p);
+    if (!(k > 0.f)) return c;
+    for (int j = 0; j < w->n; j++) {
+        if (!(ks[j] > 0.f)) continue;
+        const Sample* sp = &w->f[j];
+        /* Anchor: white above from's luminance, black below; the px is from moved part f toward it, the result — `to` moved part g */
+        float an = y >= sp->ys ? 1.f : 0.f, room = fabsf(an - sp->ys);
+        float f = room > 0.f ? fminf(fabsf(y - sp->ys) / room, 1.f) : 0.f, g = f * (an > 0.f ? sp->up : sp->down), mo[3], ba[3], ml[3], r[3];
+        for (int i = 0; i < 3; i++) {
+            mo[i] = sp->sl[i] + f * (an - sp->sl[i]);
+            ba[i] = w->tl[i] + g * (an - w->tl[i]);
+        }
+        oklab(mo, ml);
+        oklab(ba, r);
+        /* The px off that model, as much light as it had: an Oklab difference's light goes as L², so onto a lighter result it shrinks (a dark px' tint of its
+        neighbors doesn't become a blot), never grows */
+        float e1 = lab[1] - ml[1], e2 = lab[2] - ml[2], sc = r[0] > ml[0] ? (ml[0] / r[0]) * (ml[0] / r[0]) : 1.f;
+        r[0] += sc * (lab[0] - ml[0]);
+        r[1] += sc * (sp->m[0] * e1 - sp->m[1] * e2);
+        r[2] += sc * (sp->m[1] * e1 + sp->m[0] * e2);
+        for (int i = 0; i < 3; i++) {
+            q[i] += ks[j] * r[i];
+            under[i] += ks[j] * sp->sl[i];
+        }
+        sum += ks[j];
+    }
+    for (int i = 0; i < 3; i++) {
+        q[i] = lab[i] + k * (q[i] / sum - lab[i]);
+        under[i] /= sum;
+    }
+    linear(q, o);
+    into_gamut(o);
+    float keep = 1.f; /* the px' alpha left */
+    if (w->opacity < 1.f) {
+        /* px = (1 − k)·rest + k·sample: the sample's share taken out (the rest kept a valid color), translucent `to` put in its place */
+        float op = w->opacity;
+        keep = 1.f - (1.f - op) * k;
+        if (!(keep > 0.f)) return 0;
+        for (int i = 0; i < 3; i++) {
+            float rest = fminf(fmaxf(p[i] - k * under[i], 0.f), 1.f - k);
+            o[i] = (op * o[i] + (1.f - op) * rest) / keep;
+        }
+    }
+    uint32_t na = (uint32_t) (a * keep + 0.5f);
+    return na ? pack(o, na) : 0;
+}
+
+/* The bitmap's px locked; NULL — it isn't RGBA_8888 or can't be locked */
+static void* lock_px(JNIEnv* env, jobject bitmap, AndroidBitmapInfo* info) {
+    void* px;
+    if (AndroidBitmap_getInfo(env, bitmap, info) || info->format != ANDROID_BITMAP_FORMAT_RGBA_8888 || AndroidBitmap_lockPixels(env, bitmap, &px)) return NULL;
+    return px;
+}
+
+/* An OutOfMemoryError from HOLD set aside while the bitmaps are unlocked, then rethrown; else err as an IOException */
+static void unlock_px(JNIEnv* env, jobject a, void* ap, jobject b, void* bp, const char* err) {
+    jthrowable pending = (*env)->ExceptionOccurred(env);
+    if (pending) (*env)->ExceptionClear(env);
+    if (bp) AndroidBitmap_unlockPixels(env, b);
+    if (ap) AndroidBitmap_unlockPixels(env, a);
+    if (pending) (*env)->Throw(env, pending);
+    else if (err) (*env)->ThrowNew(env, (*env)->FindClass(env, "java/io/IOException"), err);
+}
+
+/* Recolor's samples into out (SAMPLES long): their count; 0 — none or too many */
+static int samples(JNIEnv* env, jintArray from, jint* out) {
+    jsize n = (*env)->GetArrayLength(env, from);
+    if (n < 1 || n > SAMPLES) return 0;
+    (*env)->GetIntArrayRegion(env, from, 0, n, out);
+    return n;
+}
+
+/* Recolor.swap: src's px into dst (as large; NULL — only tells, stopping at the first change; may be src), only where `only` (NULL — all; a byte per px) isn't 0.
+Returns whether some px change */
+JNIEXPORT jboolean JNICALL Java_com_perkus_imagoedit_data_Kernels_replace(JNIEnv* env, jobject thiz, jobject src, jobject dst, jintArray from, jint to,
+    jfloat opacity, jfloat threshold, jfloat amount, jbyteArray only) {
+    AndroidBitmapInfo si, di;
+    jint fs[SAMPLES];
+    int ns = samples(env, from, fs);
+    int apart = dst && !(*env)->IsSameObject(env, src, dst);
+    size_t n = only ? (size_t) (*env)->GetArrayLength(env, only) : 0;
+    void* sp = lock_px(env, src, &si);
+    void* dp = sp && apart ? lock_px(env, dst, &di) : NULL;
+    const char* err = !ns ? "Bad samples" : !sp ? "Can't read the bitmap" : apart && (!dp || di.width != si.width || di.height != si.height) ? "Can't write the bitmap"
+        : only && n < (size_t) si.width * si.height ? "Mask too small" : NULL;
+    jboolean changed = JNI_FALSE;
+    uint8_t* ok = !err && only ? HOLD(only) : NULL;
+    if (!err && (!only || ok)) {
+        Swap w;
+        swap_init(&w, fs, ns, to, opacity, threshold, amount);
+        uint8_t* out = apart ? dp : dst ? sp : NULL;
+        uint32_t stride = apart ? di.stride : si.stride;
+        uint32_t keys[1 << CACHE_BITS] = { 0 }, vals[1 << CACHE_BITS] = { 0 }; /* px → swapped: a flat color is swapped once; 0 → 0 holds */
+        for (uint32_t y = 0; y < si.height && !(changed && !out); y++) {
+            const uint32_t* s = (const uint32_t*) ((const uint8_t*) sp + (size_t) y * si.stride);
+            uint32_t* d = out ? (uint32_t*) (out + (size_t) y * stride) : NULL;
+            const uint8_t* row = ok ? ok + (size_t) y * si.width : NULL;
+            for (uint32_t x = 0; x < si.width; x++) {
+                uint32_t c = s[x], r = c;
+                if (!row || row[x]) {
+                    uint32_t h = (c * 2654435761u) >> (32 - CACHE_BITS);
+                    if (keys[h] == c) r = vals[h];
+                    else {
+                        r = swap(&w, c);
+                        keys[h] = c;
+                        vals[h] = r;
+                    }
+                }
+                if (r != c) {
+                    changed = JNI_TRUE;
+                    if (!d) break;
+                }
+                if (d) d[x] = r;
+            }
+        }
+    }
+    FREE(only, ok, JNI_ABORT);
+    unlock_px(env, src, sp, dst, apart ? dp : NULL, err);
+    return changed;
+}
+
+/* Recolor.joined: `out` (a byte per src's px) gets 1 where the px is replaced at all, else 0. Returns whether some are */
+JNIEXPORT jboolean JNICALL Java_com_perkus_imagoedit_data_Kernels_near(JNIEnv* env, jobject thiz, jobject src, jintArray from, jfloat threshold, jbyteArray out) {
+    AndroidBitmapInfo si;
+    jint fs[SAMPLES];
+    int ns = samples(env, from, fs);
+    size_t n = (size_t) (*env)->GetArrayLength(env, out);
+    void* sp = lock_px(env, src, &si);
+    const char* err = !ns ? "Bad samples" : !sp ? "Can't read the bitmap" : n < (size_t) si.width * si.height ? "Mask too small" : NULL;
+    jboolean any = JNI_FALSE;
+    uint8_t* f = !err ? HOLD(out) : NULL;
+    if (f) {
+        Swap w;
+        swap_init(&w, fs, ns, fs[0], 1.f, threshold, 1.f);
+        uint32_t keys[1 << CACHE_BITS] = { 0 };
+        uint8_t vals[1 << CACHE_BITS] = { 0 }; /* 0 → not near holds */
+        for (uint32_t y = 0; y < si.height; y++) {
+            const uint32_t* s = (const uint32_t*) ((const uint8_t*) sp + (size_t) y * si.stride);
+            uint8_t* row = f + (size_t) y * si.width;
+            for (uint32_t x = 0; x < si.width; x++) {
+                uint32_t c = s[x], h = (c * 2654435761u) >> (32 - CACHE_BITS);
+                if (keys[h] != c) {
+                    float p[3], lab[3], ks[SAMPLES];
+                    keys[h] = c;
+                    vals[h] = 0;
+                    if (c >> 24) {
+                        unpack(c, c >> 24, p, lab);
+                        vals[h] = weigh(&w, lab, ks) > 0.f;
+                    }
+                }
+                row[x] = vals[h];
+                any |= vals[h];
+            }
+        }
+    }
+    FREE(out, f, 0);
+    unlock_px(env, src, sp, NULL, NULL, err);
+    return any;
+}
+
+/* Shadows/Highlights (Correction.kt Relight). Lightness — CIE L* / 100 of the luminance: perceptually even, linear near black. Highlights and Shadows move the lightness of
+a px' surroundings (Correction.kt Base: its own lightness through an edge-aware blur, A·L + B) along a curve, the px — by the same luminance ratio: its local
+contrast and chromaticity are kept, black and white too. Whites and Blacks then move the px' own lightness about the ends: Whites — the white point (past it —
+clipped), Blacks − the black point (below it — clipped), Blacks + the darkest tones lifted, black kept (a raised black point would fade it all to gray).
+Luminance only scales: black stays black. A negative amount — the positive curve's inverse (Blacks apart): monotonic either way, −x undoes +x */
+#define LSTAR_N 4096 /* steps of the luminance → lightness table over 0..1 */
+#define TONE_N 1024 /* steps of the gain table over the surroundings' lightness 0..1 */
+#define POINT_N 2048 /* steps of the luminance table over lightness 0..POINT_MAX */
+#define POINT_MAX 2.f /* lightness past which a px is white anyway */
+#define LOCAL 0.2f /* Highlights/Shadows at 100%: the most the surroundings' lightness moves, at 3/4 / 1/4 (Shadows: deep shadows up to ×4 in luminance) */
+#define POINT 0.2f /* Whites/Blacks at 100%: how far the white / black point moves; Blacks +: the most the tones below DEEP move, of DEEP */
+#define DEEP 0.4f /* Blacks +: the tones it lifts, lightness below (black up to ×3 in luminance) */
+#define PEAK (256.f / 27.f) /* b(1 − b)³ → 1 at its peak */
+#define BISECT 24 /* halvings of an inverse's interval: past float precision */
+
+static float LSTAR[LSTAR_N + 1];
+
+/* Lightness of linear luminance y ≥ 0 */
+static float lstar(float y) { return y > 216.f / 24389.f ? 1.16f * cbrtf(y) - 0.16f : y * (24389.f / 2700.f); }
+
+/* Linear luminance of lightness l */
+static float lum(float l) {
+    if (l <= 0.08f) return l * (2700.f / 24389.f);
+    float t = (l + 0.16f) / 1.16f;
+    return t * t * t;
+}
+
+__attribute__((constructor)) static void lightness_table(void) {
+    for (int i = 0; i <= LSTAR_N; i++) LSTAR[i] = lstar((float) i / LSTAR_N);
+}
+
+/* Table t (n steps) at x, linear between steps; past its ends — the end */
+static inline float sample(const float* t, int n, float x) {
+    if (!(x > 0.f)) return t[0];
+    if (x >= (float) n) return t[n];
+    int i = (int) x;
+    return t[i] + (x - (float) i) * (t[i + 1] - t[i]);
+}
+
+static inline float lightness(float y) { return y <= 1.f ? sample(LSTAR, LSTAR_N, y * LSTAR_N) : lstar(y); }
+
+static inline float smooth(float x) { return x <= 0.f ? 0.f : x >= 1.f ? 1.f : x * x * (3.f - 2.f * x); }
+
+/* A curve at amount 0 < k ≤ LOCAL / POINT: increasing over x ± k, |f(x) − x| ≤ k */
+typedef float (*Curve)(float x, float k);
+
+/* Shadows: lifted most at 1/4, 0 and 1 kept */
+static float lift(float b, float k) {
+    float r = 1.f - b;
+    return b + k * PEAK * b * r * r * r;
+}
+
+/* Highlights: lowered most at 3/4, 0 and 1 kept */
+static float lower(float b, float k) { return b - k * PEAK * b * b * b * (1.f - b); }
+
+/* Whites: the upper half raised, by k at white: the white point at f⁻¹(1) */
+static float whiten(float l, float k) { return l + k * smooth(2.f * l - 1.f); }
+
+/* Blacks −: the lower half lowered, by k at black: the black point at f⁻¹(0) */
+static float blacken(float l, float k) { return l - k * (1.f - smooth(2.f * l)); }
+
+/* Blacks +: the tones below DEEP lifted as Shadows' curve, most at DEEP / 4, black and DEEP kept */
+static float deepen(float l, float k) { return l < DEEP ? DEEP * lift(l / DEEP, k) : l; }
+
+/* f at signed amount k: negative — f's inverse at −k */
+static float bend(Curve f, float k, float x) {
+    if (k > 0.f) return f(x, k);
+    if (!(k < 0.f)) return x;
+    float lo = x + k, hi = x - k;
+    for (int i = 0; i < BISECT; i++) {
+        float m = 0.5f * (lo + hi);
+        if (f(m, -k) < x) lo = m;
+        else hi = m;
+    }
+    return 0.5f * (lo + hi);
+}
+
+static jfloatArray table(JNIEnv* env, const float* t, int n) {
+    jfloatArray out = (*env)->NewFloatArray(env, n);
+    if (out) (*env)->SetFloatArrayRegion(env, out, 0, n, t);
+    return out;
+}
+
+/* Relight.gains: the luminance ratio by the surroundings' lightness, TONE_N steps over 0..1 */
+JNIEXPORT jfloatArray JNICALL Java_com_perkus_imagoedit_data_Kernels_gains(JNIEnv* env, jobject thiz, jfloat highlights, jfloat shadows) {
+    float t[TONE_N + 1];
+    for (int i = 1; i <= TONE_N; i++) {
+        float b = (float) i / TONE_N;
+        t[i] = lum(fmaxf(bend(lower, -highlights * LOCAL, bend(lift, shadows * LOCAL, b)), 0.f)) / lum(b);
+    }
+    t[0] = t[1]; /* the ratio's limit at black, near enough */
+    return table(env, t, TONE_N + 1);
+}
+
+/* Relight.points: luminance by lightness, POINT_N steps over 0..POINT_MAX */
+JNIEXPORT jfloatArray JNICALL Java_com_perkus_imagoedit_data_Kernels_points(JNIEnv* env, jobject thiz, jfloat whites, jfloat blacks) {
+    float t[POINT_N + 1];
+    for (int i = 0; i <= POINT_N; i++) {
+        float l = (float) i * POINT_MAX / POINT_N;
+        t[i] = lum(fmaxf(bend(whiten, whites * POINT, blacks > 0.f ? deepen(l, blacks * POINT) : blacken(l, -blacks * POINT)), 0.f));
+    }
+    return table(env, t, POINT_N + 1);
+}
+
+/* Px c (premultiplied RGBA, alpha > 0): by gains at its surroundings' lightness a·L + b (gains NULL — none), then by points (NULL — none) */
+static uint32_t relit(uint32_t c, const float* gains, float a, float b, const float* points) {
+    uint32_t al = c >> 24;
+    float p[3], k = 1.f;
+    unpremul(c, al, p);
+    float y = luma(p);
+    if (gains) k = sample(gains, TONE_N, (a * lightness(y) + b) * TONE_N);
+    if (points) k = y > 0.f ? sample(points, POINT_N, lightness(y * k) * (POINT_N / POINT_MAX)) / y : 0.f;
+    for (int i = 0; i < 3; i++) p[i] *= k;
+    into_gamut(p);
+    return pack(p, al);
+}
+
+/* Relight.adjust: src's px (its px (0, 0) at file px (x, y), each s file px a side) into dst (as large; NULL — only tells, stopping at the first change; may be
+src). gains — by the surroundings' lightness from base (A, B a cell; cells: gw, gh, gx, gy, n — gw × gh cells 2ⁿ px a side from cell (gx, gy), bilinear between
+their centers), NULL — none; points — NULL — none. Returns whether some px change */
+JNIEXPORT jboolean JNICALL Java_com_perkus_imagoedit_data_Kernels_relight(JNIEnv* env, jobject thiz, jobject src, jobject dst, jint x, jint y, jint s,
+    jfloatArray gains, jfloatArray base, jintArray cells, jfloatArray points) {
+    AndroidBitmapInfo si, di;
+    jint at[5] = { 0 };
+    const char* bad = NULL;
+    if (gains) {
+        if (!base || !cells || (*env)->GetArrayLength(env, cells) < 5 || (*env)->GetArrayLength(env, gains) != TONE_N + 1) bad = "Bad base";
+        else {
+            (*env)->GetIntArrayRegion(env, cells, 0, 5, at);
+            if (at[0] < 1 || at[1] < 1 || at[4] < 0 || at[4] > 16 || (size_t) (*env)->GetArrayLength(env, base) < 2 * (size_t) at[0] * (size_t) at[1]) bad = "Bad base";
+        }
+    }
+    if (!bad && points && (*env)->GetArrayLength(env, points) != POINT_N + 1) bad = "Bad points";
+    int apart = dst && !(*env)->IsSameObject(env, src, dst);
+    void* sp = lock_px(env, src, &si);
+    void* dp = sp && apart ? lock_px(env, dst, &di) : NULL;
+    const char* err = bad ? bad : !sp ? "Can't read the bitmap" : apart && (!dp || di.width != si.width || di.height != si.height) ? "Can't write the bitmap" : NULL;
+    jboolean changed = JNI_FALSE;
+    float* g = !err && gains ? HOLD(gains) : NULL;
+    float* ab = g ? HOLD(base) : NULL;
+    float* pt = !err && points && (!gains || ab) ? HOLD(points) : NULL;
+    if (!err && (!gains || ab) && (!points || pt)) {
+        int gw = at[0], gh = at[1];
+        float inv = ldexpf(1.f, -at[4]), ox = (float) at[2] + 0.5f, oy = (float) at[3] + 0.5f;
+        uint8_t* out = apart ? dp : dst ? sp : NULL;
+        uint32_t stride = apart ? di.stride : si.stride;
+        uint32_t keys[1 << CACHE_BITS] = { 0 }, vals[1 << CACHE_BITS] = { 0 }; /* without gains: px → relit */
+        for (uint32_t j = 0; j < si.height && !(changed && !out); j++) {
+            const uint32_t* row = (const uint32_t*) ((const uint8_t*) sp + (size_t) j * si.stride);
+            uint32_t* d = out ? (uint32_t*) (out + (size_t) j * stride) : NULL;
+            const float *r0 = ab, *r1 = ab;
+            float fv = 0.f;
+            if (ab) {
+                float v = fminf(fmaxf(((float) y + ((float) j + 0.5f) * (float) s) * inv - oy, 0.f), (float) (gh - 1));
+                int v0 = (int) v;
+                fv = v - (float) v0;
+                r0 = ab + 2 * (size_t) v0 * (size_t) gw;
+                r1 = v0 + 1 < gh ? r0 + 2 * (size_t) gw : r0;
+            }
+            for (uint32_t i = 0; i < si.width; i++) {
+                uint32_t c = row[i], r = c;
+                if (c >> 24) {
+                    if (ab) {
+                        float u = fminf(fmaxf(((float) x + ((float) i + 0.5f) * (float) s) * inv - ox, 0.f), (float) (gw - 1));
+                        int u0 = (int) u, u1 = u0 + 1 < gw ? u0 + 1 : u0;
+                        float fu = u - (float) u0;
+                        const float *p00 = r0 + 2 * u0, *p01 = r0 + 2 * u1, *p10 = r1 + 2 * u0, *p11 = r1 + 2 * u1;
+                        float a0 = p00[0] + fu * (p01[0] - p00[0]), a1 = p10[0] + fu * (p11[0] - p10[0]);
+                        float b0 = p00[1] + fu * (p01[1] - p00[1]), b1 = p10[1] + fu * (p11[1] - p10[1]);
+                        r = relit(c, g, a0 + fv * (a1 - a0), b0 + fv * (b1 - b0), pt);
+                    } else {
+                        uint32_t h = (c * 2654435761u) >> (32 - CACHE_BITS);
+                        if (keys[h] == c) r = vals[h];
+                        else {
+                            r = relit(c, NULL, 0.f, 0.f, pt);
+                            keys[h] = c;
+                            vals[h] = r;
+                        }
+                    }
+                }
+                if (r != c) {
+                    changed = JNI_TRUE;
+                    if (!d) break;
+                }
+                if (d) d[i] = r;
+            }
+        }
+    }
+    FREE(points, pt, JNI_ABORT);
+    FREE(base, ab, JNI_ABORT);
+    FREE(gains, g, JNI_ABORT);
+    unlock_px(env, src, sp, dst, apart ? dp : NULL, err);
+    return changed;
+}
+
+/* Relight's Guide: out — src's cells 2ⁿ px a side, a row of them ⌈w / 2ⁿ⌉ — gets each one's Σα, ΣαL, ΣαL² (α 0..1, L — lightness) over src's px
+[x0, x1) × [y0, y1), the rest 0 */
+JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_lightness(JNIEnv* env, jobject thiz, jobject src, jint x0, jint y0, jint x1, jint y1, jint n,
+    jfloatArray out) {
+    AndroidBitmapInfo si;
+    size_t len = (size_t) (*env)->GetArrayLength(env, out);
+    void* sp = lock_px(env, src, &si);
+    uint32_t q = 0, cells = 0;
+    if (sp && n >= 0 && n <= 16) {
+        q = (si.width + (1u << n) - 1) >> n;
+        cells = q * ((si.height + (1u << n) - 1) >> n);
+    }
+    const char* err = !sp ? "Can't read the bitmap" : !q ? "Bad cells" : x0 < 0 || y0 < 0 || x1 > (jint) si.width || y1 > (jint) si.height ? "Bad rect"
+        : len < 3 * (size_t) cells ? "Sums too small" : NULL;
+    float* f = !err ? HOLD(out) : NULL;
+    if (f) {
+        memset(f, 0, 3 * (size_t) cells * sizeof(float));
+        uint32_t keys[1 << CACHE_BITS] = { 0 };
+        float vals[1 << CACHE_BITS]; /* px → lightness: read only after written */
+        for (jint j = y0; j < y1; j++) {
+            const uint32_t* row = (const uint32_t*) ((const uint8_t*) sp + (size_t) j * si.stride);
+            float* e = f + 3 * (size_t) (j >> n) * q;
+            for (jint i = x0; i < x1; i++) {
+                uint32_t c = row[i], a = c >> 24;
+                if (!a) continue;
+                uint32_t h = (c * 2654435761u) >> (32 - CACHE_BITS);
+                if (keys[h] != c) {
+                    float p[3];
+                    unpremul(c, a, p);
+                    keys[h] = c;
+                    vals[h] = lightness(luma(p));
+                }
+                float l = vals[h], w = (float) a * (1.f / 255.f), *cell = e + 3 * (i >> n);
+                cell[0] += w;
+                cell[1] += w * l;
+                cell[2] += w * l * l;
+            }
+        }
+    }
+    FREE(out, f, 0);
+    unlock_px(env, src, sp, NULL, NULL, err);
 }

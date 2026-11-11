@@ -62,7 +62,6 @@ import com.perkus.imagoedit.ui.common.IconBtn
 import com.perkus.imagoedit.ui.common.OkCancel
 import com.perkus.imagoedit.ui.common.TextInputDialog
 import com.perkus.imagoedit.ui.common.rememberCheckerBrush
-import com.perkus.imagoedit.ui.common.rememberImagePicker
 import com.perkus.imagoedit.ui.theme.BarBg
 import com.perkus.imagoedit.ui.theme.BtnGreen
 import com.perkus.imagoedit.ui.theme.BtnRed

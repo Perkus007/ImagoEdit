@@ -58,6 +58,7 @@ import com.perkus.imagoedit.data.Tiles
 import com.perkus.imagoedit.data.asPath
 import com.perkus.imagoedit.data.canvasToFile
 import com.perkus.imagoedit.data.keepPaint
+import com.perkus.imagoedit.data.saveClipLayer
 import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.PopoverCard
@@ -253,13 +254,13 @@ class TransitionTool(l: Layer, val options: TransitionOptions, cw: Int, ch: Int,
     private var shaded: TransitionStep? = null
 
     /** In its layer's offscreen, as the bake erases: the gradient by DST_OUT within the selection. Draw phase */
-    override fun draw(c: Canvas, key: Long, filter: Boolean, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float) {
+    override fun draw(c: Canvas, l: Layer, filter: Boolean, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, k: Float) {
         val v = held ?: step
         if (v != shaded) { shade.shader = v.shader(); shaded = v }
         c.save()
         c.concat(toFile)
         if (sel != null) {
-            c.saveLayer(null, cut)
+            c.saveClipLayer(cut)
             val f = sel.feather
             if (f != null) c.clipRect(f.bounds) else c.clipPath(sel.outline)
         }

@@ -69,7 +69,7 @@ fun SelectionPanel(o: SelectionOptions, select: SelectTool, open: ToolPopup?, on
         }
         SelectStyle.Circle -> SwitchCell(o.fixedRatio, "1:1")
         SelectStyle.Wand -> {
-            PopupBtn(ToolPopup.Tolerance, AppIcons.Slider, open, onOpen) { ParamRow(stringResource(R.string.select_tolerance), o.tolerance) }
+            PopupBtn(ToolPopup.Tolerance, AppIcons.Slider, open, onOpen) { ParamRow(stringResource(R.string.tolerance), o.tolerance) }
             SwitchCell(o.contiguous, stringResource(R.string.select_contiguous))
         }
         SelectStyle.Brush -> BrushBtn(o.brush, open, onOpen)

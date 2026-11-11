@@ -55,16 +55,16 @@ class MaskPaints {
     val clip = Rect()
 }
 
-/** The brush's live strokes of layer [key], drawn inside its offscreen; [bmp]…[k] — the layer as drawMasked draws it (a clone redraws it shifted) */
+/** The brush's live strokes of layer [l] (as drawn), inside its offscreen, in its file px; [bmp]…[k] — the layer as drawMasked draws it (a clone redraws it shifted) */
 interface MaskOverlay {
-    fun draw(c: Canvas, key: Long, filter: Boolean, bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float)
+    fun draw(c: Canvas, l: Layer, filter: Boolean, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, k: Float)
 }
 
 /** [bmp] (or a smaller copy; null — none) over [w]×[h] file px × [mask] + [patch] by ADD: mask and patch are disjoint, so filtered coarse levels sum to a whole
 (SRC_OVER leaves a see-through seam at patch tile edges). Levels for [k] px per file px. The single compositing path: preview, merge, crop, export, thumbnails, clone.
-[blend] — onto what's drawn below. A software canvas goes in bands over its clip only */
-fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float, alpha: Int, filter: Boolean, p: MaskPaints, overlay: MaskOverlay? = null, key: Long = 0L,
-    blend: BlendMode = BlendMode.SRC_OVER) {
+[overlay] — for layer [drawn]; [blend] — onto what's drawn below. A software canvas goes in bands over its clip only */
+fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Tiles?, k: Float, alpha: Int, filter: Boolean, p: MaskPaints, overlay: MaskOverlay? = null,
+    drawn: Layer? = null, blend: BlendMode = BlendMode.SRC_OVER) {
     p.image.isFilterBitmap = filter
     p.mask.isFilterBitmap = filter
     p.patch.isFilterBitmap = filter
@@ -98,16 +98,21 @@ fun Canvas.drawMasked(bmp: Bitmap?, w: Int, h: Int, mask: LayerMask?, patch: Til
     }
     while (top < end) {
         val bottom = minOf(end, top + band)
-        saveLayer(0f, top, w.toFloat(), bottom, p.layer)
+        // A live stroke may reach past the layer (Stroke.room grows it): the offscreen spans the clip
+        if (overlay != null) saveClipLayer(p.layer) else saveLayer(0f, top, w.toFloat(), bottom, p.layer)
         if (!isHardwareAccelerated) clipRect(0f, top, w.toFloat(), bottom) // bands meeting mid-px: the layers' rounded-out rows overlap, each px is blended once
         if (bmp != null) drawBitmap(bmp, null, p.rect.apply { set(0f, 0f, w.toFloat(), h.toFloat()) }, p.image)
         if (mask != null) drawTiles(mask.levels[n], mask.cols(n), (1 shl n).toFloat(), p.mask, p.rect)
         if (patch != null) drawPatch(patch, pn, top, w.toFloat(), bottom, p)
-        overlay?.draw(this, key, filter, bmp, w, h, mask, patch, k)
+        if (drawn != null) overlay?.draw(this, drawn, filter, bmp, mask, patch, k)
         restore()
         top = bottom
     }
 }
+
+/** An offscreen over the whole clip. Not saveLayer(null): Android takes it as the clip's local bounds rounded to whole units — zoomed in, short of the clip by up
+to half a unit, a strip at its edges left undrawn */
+fun Canvas.saveClipLayer(p: Paint?) = clipBounds.let { saveLayer(it.left - 1f, it.top - 1f, it.right + 1f, it.bottom + 1f, p) }
 
 /** [into] (software) gets the layer from px ([x], [y]) at [k] px per file px, transparent past it; k = 1 — an exact copy.
 The px its edge cuts (the last of ceil(w·k), ceil(h·k)) get the edge, as from a clamped texture: by the pixel-center rule they'd stay empty — drawn with the layer shifted

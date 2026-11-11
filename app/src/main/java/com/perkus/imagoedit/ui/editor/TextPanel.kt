@@ -118,7 +118,7 @@ private fun TextPanel(s: TextState, picture: PipetteSource, open: ToolPopup?, on
         // 16dp apart as row 2's: each over one of them
         Row(Modifier.width(ROW_W), Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
             Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
-                RoundBtn(null, false, { s.color }, Modifier, FIELD_H) { onPopup(colorPopup(s.options.color, ColorOpacity({ s.opacity }, s::finish, s::slideOpacity), picture, it)) }
+                ColorBtn(s.options.color, ColorOpacity({ s.opacity }, s::finish, s::slideOpacity), picture, onPopup, Modifier, FIELD_H)
                 TextField(s, onType, Modifier.weight(1f))
                 FontField(s, onPopup, Modifier.weight(1f))
             }

@@ -8,6 +8,7 @@ import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -48,6 +49,7 @@ import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
@@ -73,6 +75,7 @@ import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.anchored
 import com.perkus.imagoedit.ui.common.plainClickable
 import com.perkus.imagoedit.ui.common.rememberBounds
+import com.perkus.imagoedit.ui.common.rememberCheckerBrush
 import com.perkus.imagoedit.ui.common.trackBounds
 import com.perkus.imagoedit.ui.theme.SmallShape
 import com.perkus.imagoedit.ui.theme.TranslucentGray
@@ -80,9 +83,12 @@ import kotlin.math.floor
 import kotlin.math.roundToInt
 
 private const val UNFOLD_MS = 150 // короче анимаций панелей: палец уже ведёт по списку
+private const val ICON_K = 0.64f // иконка круглой кнопки от её размера: 32 dp при 50
+private const val LIGHT = 0.18f // яркость цвета (luminance), выше которой иконка на нём чёрная: контраст с чёрным и белым равен
 val PANEL_GAP = 4.dp // между панелью и подсказкой, окном настроек или меню
 private val TIP_SHAPE = RoundedCornerShape(4.dp)
 private val ROUND_BTN = 50.dp
+private val CHECKER = 4.dp // клетка шахматки под цветом кнопки
 private val SECTION_GAP = 8.dp
 private val MENU_ICON_CENTER = 28.dp // отступ Popover 8 + отступ MenuItem 8 + половина иконки 12
 
@@ -104,6 +110,7 @@ class ToolOptions(settings: AppSettings) {
     val transform = TransformOptions(settings)
     val fill = FillOptions(settings)
     val transition = TransitionOptions(settings)
+    val correction = CorrectionOptions(settings)
 }
 
 interface ToolStyle {
@@ -149,8 +156,7 @@ fun ToolsPanel(tool: EnumOption<Tool>, options: ToolOptions, picture: PipetteSou
             Tool.Selection -> SelectionPanel(options.selection, select, popup, onPopup)
             Tool.Drawing -> {
                 BrushBtn(options.drawing, popup, onPopup)
-                // Read in the draw phase: follows the sliders without recomposition
-                RoundBtn(null, false, { options.color.value }) { onPopup(colorPopup(options.color, ColorOpacity(options.drawing[BrushParam.Opacity]), picture, it)) }
+                ColorBtn(options.color, ColorOpacity(options.drawing[BrushParam.Opacity]), picture, onPopup)
             }
             Tool.Stamp -> StampPanel(options.stamp, popup, onPopup)
             Tool.Eraser -> BrushBtn(options.eraser, popup, onPopup)
@@ -200,16 +206,25 @@ fun <E> StyleBtn(o: EnumOption<E>, open: ToolPopup?, onOpen: (OpenPopup) -> Unit
 fun MenuItem(s: ToolStyle, selected: Boolean = false, enabled: Boolean = true, indication: Indication? = LocalIndication.current, onClick: () -> Unit) =
     MenuItem(stringResource(s.title), selected, enabled, indication, onClick) { Icon(s.icon, null, Modifier.size(24.dp), it) }
 
-/** [fill] is read in the draw phase */
+/** [fill] is read in the draw phase; [onLongClick] null — none, no system haptic: Feedback follows the app's settings */
 @Composable
 fun RoundBtn(icon: ImageVector?, active: Boolean, fill: () -> Color = { if (active) Color.White else Color.Transparent }, modifier: Modifier = Modifier.padding(top = 8.dp), size: Dp = ROUND_BTN,
-    onClick: (anchor: Rect) -> Unit) {
+    onLongClick: (() -> Unit)? = null, tint: Color = if (active) Color.Black else Color.White, onClick: (anchor: Rect) -> Unit) {
     val bounds = rememberBounds()
     Box(
-        modifier.trackBounds(bounds).size(size).clip(CircleShape).drawBehind { drawRect(fill()) }.border(1.dp, TranslucentGray, CircleShape).plainClickable { onClick(bounds.rect) },
+        modifier.trackBounds(bounds).size(size).clip(CircleShape).drawBehind { drawRect(fill()) }.border(1.dp, TranslucentGray, CircleShape)
+            .combinedClickable(interactionSource = null, indication = null, onLongClick = onLongClick, hapticFeedbackEnabled = false) { onClick(bounds.rect) },
         Alignment.Center
-    ) { icon?.let { Icon(it, null, Modifier.size(32.dp), if (active) Color.Black else Color.White) } }
+    ) { icon?.let { Icon(it, null, Modifier.size(size * ICON_K), tint) } }
 }
+
+/** Opens the color panel. Filled with the color at [opacity] over a checker, read in the draw phase: follows the panel without recomposition. [icon] over it —
+black or white, whichever stands out on the color (then read in composition) */
+@Composable
+fun ColorBtn(o: ColorOptions, opacity: ColorOpacity?, source: PipetteSource, onOpen: (OpenPopup) -> Unit, modifier: Modifier = Modifier.padding(top = 8.dp), size: Dp = ROUND_BTN,
+    onLongClick: (() -> Unit)? = null, icon: ImageVector? = null) =
+    RoundBtn(icon, false, { o.shown(opacity) }, modifier.background(rememberCheckerBrush(CHECKER), CircleShape), size, onLongClick,
+        if (icon != null && o.value.luminance() > LIGHT) Color.Black else Color.White) { onOpen(colorPopup(o, opacity, source, it)) }
 
 @Composable
 fun PopupBtn(kind: ToolPopup, icon: ImageVector, open: ToolPopup?, onOpen: (OpenPopup) -> Unit, content: @Composable () -> Unit) =

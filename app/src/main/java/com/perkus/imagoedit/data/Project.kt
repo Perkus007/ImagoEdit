@@ -51,7 +51,9 @@ enum class Blend(val mode: BlendMode, private val mix: ((b: Float, s: Float) -> 
     }
 }
 
-private fun lum(c: FloatArray) = 0.3f * c[0] + 0.59f * c[1] + 0.11f * c[2]
+internal val LUMA = floatArrayOf(0.3f, 0.59f, 0.11f) // W3C
+
+internal fun lum(c: FloatArray) = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]
 
 /** W3C SetLum: shifted to luminosity [l], then pulled into 0..1 keeping it */
 private fun FloatArray.withLum(l: Float): FloatArray {
@@ -71,7 +73,7 @@ fun newLayerId() = Random.nextLong(1, Long.MAX_VALUE)
 
 val Layer.hasImage get() = file != null || patch != null
 
-/** Where strokes reach it: an empty one covers the whole canvas */
+/** The px strokes are drawn in: an empty one covers the whole canvas; one an image doesn't, a painting stroke grows (Stroke.room) */
 fun Layer.paintable(cw: Int, ch: Int) = if (hasImage) this else copy(x = 0, y = 0, w = cw, h = ch, orient = 0)
 
 val Layer.alpha255 get() = (opacity * 255f / MAX_OPACITY).roundToInt()
@@ -105,11 +107,11 @@ fun Layer.canvasToFile() = Matrix().also { fileToCanvas().invert(it) }
 /** A new Region each call: Region is mutable */
 fun Layer.region() = Region(x, y, x + w, y + h)
 
-/** The single layer compositing rule (merge, thumbnail, export), the canvas scaled [kx]×[ky]; [bmp] may be a smaller copy */
-fun Canvas.drawLayer(l: Layer, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, p: MaskPaints, filter: Boolean = false, kx: Float = 1f, ky: Float = kx) {
+/** The single layer compositing rule (merge, thumbnail, export): layer [l], the canvas scaled [kx]×[ky]; [bmp] may be a smaller copy */
+fun Canvas.drawLayer(l: Layer, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, paints: MaskPaints, filter: Boolean = false, kx: Float = 1f, ky: Float = kx) {
     save()
     concat(l.fileToCanvas(kx = kx, ky = ky))
-    drawMasked(bmp, l.fileW, l.fileH, mask, patch, maxOf(kx, ky), l.alpha255, filter, p, blend = l.blend.mode)
+    drawMasked(bmp, l.fileW, l.fileH, mask, patch, maxOf(kx, ky), l.alpha255, filter, paints, blend = l.blend.mode)
     restore()
 }
 

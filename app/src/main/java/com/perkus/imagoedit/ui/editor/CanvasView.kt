@@ -135,9 +135,9 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
         }
     }
 
-    /** A PlaceState [tool]'s layer drawn with its transform (a text by the tool itself), a TransitionTool's with its preview unless live strokes are on it;
+    /** A PlaceState [tool]'s layer drawn with its transform (a text by the tool itself), a TransitionTool's or [correction]'s with its preview unless live strokes are on it;
     [fill]'s gets its preview */
-    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: CanvasTool<*>? = null, detail: Float = 1f, fill: FillTool? = null) {
+    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: CanvasTool<*>? = null, detail: Float = 1f, fill: FillTool? = null, correction: CorrectionTool? = null) {
         val lv = levels.value
         val shown = layers.value
         val place = tool as? PlaceState<*>
@@ -151,7 +151,7 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
                 val blend = preview.blend(l.id, l.blend).mode
                 if (active is TextState) with(active) { drawLive(scale, canvasW, canvasH) }
                 else drawPlaced(d.img, l.fileW, l.fileH, active?.t ?: l.inPlace, scale, canvasW, canvasH, d.img?.let { lv[it.asAndroidBitmap()] }, alpha, l.orient, d.mask, d.patch,
-                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer }, l.id, detail, blend)
+                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer } ?: correction?.takeIf { l.id == it.layer && it.shows }, l, detail, blend)
                 if (fill != null && l.id == fill.layer) with(fill) { drawPreview(alpha, blend, scale, canvasW, canvasH) }
             }
         }
@@ -169,8 +169,10 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
     }
 
     /** Visible layers composited under [p] from their own pixels and patches; transparent or off the canvas → null */
+    override fun canvasAt(p: Offset) = (p - vp.offset) / vp.scale
+
     override fun colorAt(p: Offset): Color? {
-        val c = (p - vp.offset) / vp.scale
+        val c = canvasAt(p)
         if (c.x < 0f || c.y < 0f || c.x >= canvasW || c.y >= canvasH) return null
         val m = Matrix()
         val pt = FloatArray(2)
@@ -215,9 +217,11 @@ interface SelectionPreview {
 }
 
 /** [tool] — Move, Text, Crop, Selection transform or Transition while open; [select], [brush] — the active tool's gesture (both for the Selection brush); [selection] — drawn always,
-as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open */
+as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open; [correction] — the carousel's corrections while open;
+[onTap] — a one-finger touch that didn't move */
 @Composable
-fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, modifier: Modifier = Modifier) {
+fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, correction: CorrectionTool?,
+    onTap: (() -> Unit)?, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val margin = with(density) { 24.dp.toPx() }
     // Bars overlay the canvas: fit is for the area between them
@@ -244,8 +248,9 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
     Box(
         modifier
             .onSizeChanged { s -> vp.fitInto(Rect(sideW, topH, s.width - sideW, s.height.toFloat()), margin, picture.canvasW, picture.canvasH) }
-            .pointerInput(tool, select, brush) {
+            .pointerInput(tool, select, brush, onTap) {
                 val slop = viewConfiguration.touchSlop
+                var lastTap = 0L // a lone tap's release, uptime ms; 0 — none to pair with
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
                     tool?.begin(down.position - vp.offset, vp.scale, this)
@@ -264,11 +269,11 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
                                 e.changes.forEach { it.consume() }
                             } else {
                                 vp.zoomPct = 0
-                                if ((tool != null || select != null || painting != null) && !multi) {
+                                if (!multi) {
                                     val c = e.changes.firstOrNull { it.id == down.id }
                                     if (c != null && c.pressed) {
                                         if (!moving && (c.position - down.position).getDistance() > slop) moving = true
-                                        if (moving) {
+                                        if (moving && (tool != null || select != null || painting != null)) {
                                             if (painting != null) {
                                                 // Historical points too: a fast stroke keeps its curves
                                                 val past = c.historical
@@ -282,6 +287,9 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
                             }
                         } while (e.changes.any { it.pressed })
                         if (!multi) { select?.finish(tap = !moving); painting?.finish() } // a pinch discards the gesture
+                        val paired = down.uptimeMillis - lastTap <= viewConfiguration.doubleTapTimeoutMillis
+                        lastTap = 0L
+                        if (!multi && !moving) if (paired && tool != null) tool.doubleTap() else { onTap?.invoke(); lastTap = currentEvent.changes[0].uptimeMillis }
                     } finally { vp.zoomPct = 0; tool?.finish(); select?.cancel(); painting?.cancel() } // also on cancellation; the tool's history step once per gesture
                 }
             }
@@ -298,7 +306,7 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
                     if (part != Part.Hot) compositingStrategy = if (vp.zoomPct == 0 && picture.range(part, hot).let { !it.isEmpty() && (part == Part.Below || !picture.blends(it)) })
                         CompositingStrategy.Offscreen else CompositingStrategy.Auto
                 }
-                .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill) } })
+                .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill, correction) } })
         }
         // Offscreen: the cut-out stays in it
         if (preview != null) Spacer(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind {

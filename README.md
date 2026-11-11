@@ -8,6 +8,8 @@ It works fully offline: no ads, no analytics, no internet permission.
 
 - Up to 100 MP canvases, 16 000 px per side.
 - Layers with blend modes, selections, drawing, clone stamp, healing brush, eraser, blur brush, text, opacity transition.
+- Image corrections: brightness, contrast, saturation, temperature, shadows/highlights, color balance, replace color and more.
+  Several can be set together and applied as one step.
 - Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders.
 - Projects live in folder on the device and stay there when the app is uninstalled.
 - Project autosave.
@@ -44,6 +46,8 @@ It works fully offline: no ads, no analytics, no internet permission.
 ### Projects
 - Project grid with thumbnails, sorted by last change.
 - New project with a set canvas size (aspect-ratio lock), or a project made from an image.
+- An image is imported as is or at a lower resolution chosen before import, with its aspect ratio kept.
+  This works for new projects and for **Add image**.
 - Opens images from other apps: **Open with** and **Share.**
 - Rename (tap the name) and delete several projects at once
 - On exit: **Save**, **Save a copy** or **Exit without saving.**
@@ -78,6 +82,7 @@ It works fully offline: no ads, no analytics, no internet permission.
 - Flip horizontally and vertically.
 - Exact values: X, Y, width, height, angle and opacity, entered with the built-in number pad.
 - Aspect ratio locking, snapping to canvas edges, rotation with precise degree adjustment, and accurate 1-pixel movement.
+- Double-tap the canvas to fit the image into it, centered. Double-tap again to return the image to its original size, also centered.
 - Separate Undo/Redo inside the tool (100 steps)
 
 ### Text
@@ -139,7 +144,7 @@ and never overwrite an older file.
 | Undo memory for strokes and masks | 1/24 of the device RAM, from 100 to 300 MB. Beyond it the oldest steps are dropped |
 | Export quality                | 10–100 % |
 
-Images over the canvas limits can be scaled down proportionally on import: the app asks first.
+Images over the canvas limits can't be imported as is: the app offers to reduce their resolution first.
 
 ## Requirements
 - Android 11 (API 30) or newer
@@ -180,7 +185,8 @@ can be backed up, copied to another device or deleted with a file manager.
 
 ## How it works
 - **Import keeps the original**: an imported file is stored byte for byte, with its format, EXIF and
-  ICC profile. EXIF orientation is applied, 16-bit images are converted to 8 bits per channel
+  ICC profile. EXIF orientation is applied, 16-bit images are converted to 8 bits per channel.
+  A reduced import is decoded straight at the chosen size, without holding the full image in memory
 - **Non-destructive strokes**: the eraser writes a mask and brushes write a patch over the layer,
   both in 256×256 tiles with copy-on-write. Layer pixels stay unchanged, and Undo steps share tiles,
   so a stroke costs only the tiles it touched
@@ -221,13 +227,15 @@ app/src/main/
 │   ├── MainActivity.kt    entry point, Open with / Share intents
 │   ├── AppViewModel.kt    app state: projects, layer operations, history, autosave, export
 │   ├── data/              model, disk format, raster engine (tiles, masks, strokes,
-│   │                      healing, selection edges), import/export, fonts, text layout
+│   │                      healing, selection edges), image corrections, import/export,
+│   │                      fonts, text layout
 │   └── ui/
 │       ├── menu/          project list, export panel, settings, project dialogs
 │       ├── editor/        editor screen, canvas, tools and their panels
 │       ├── common/        dialogs, popovers, number pad, sliders, icons
 │       └── theme/
-├── cpp/                   JNI JPEG/WebP encoders, CMake build of libjpeg-turbo and libwebp
+├── cpp/                   JNI JPEG/WebP encoders, pixel loops (brushes, smudge, corrections),
+│                          CMake build of libjpeg-turbo and libwebp
 └── res/                   strings (en, ru, uk), bundled fonts, license texts
 ```
 Stack: Kotlin, Jetpack Compose (Material 3), C via JNI. Third-party libraries are never copied into the repository:

@@ -39,6 +39,7 @@ import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
 import com.perkus.imagoedit.data.ContentBox
 import com.perkus.imagoedit.data.ContentTransform
+import com.perkus.imagoedit.data.Correction
 import com.perkus.imagoedit.data.EnumOption
 import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.data.Layer
@@ -61,8 +62,8 @@ import com.perkus.imagoedit.ui.common.DialogButton
 import com.perkus.imagoedit.ui.common.IconBtn
 import com.perkus.imagoedit.ui.common.SideBar
 import com.perkus.imagoedit.ui.common.dismissOnPress
-import com.perkus.imagoedit.ui.common.rememberImagePicker
 import com.perkus.imagoedit.ui.menu.CanvasSizeDialog
+import com.perkus.imagoedit.ui.menu.rememberImagePicker
 import com.perkus.imagoedit.ui.theme.BtnGray
 import com.perkus.imagoedit.ui.theme.BtnGreen
 import com.perkus.imagoedit.ui.theme.BtnRed
@@ -104,6 +105,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     var fill by remember { mutableStateOf<FillTool?>(null) }
     var transition by remember { mutableStateOf<TransitionTool?>(null) }
     var applying by remember { mutableStateOf(false) } // Fill/Stroke or Transition being baked
+    var correction by remember { mutableStateOf<CorrectionTool?>(null) } // the carousel's, while open
     val pickImage = rememberImagePicker(vm::addImage)
     val scope = rememberCoroutineScope()
     val placeholder = stringResource(R.string.text)
@@ -123,7 +125,9 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
             stack.add(pending.index, added to pending.layer)
         }
         text?.let { stack.add(it.layer, null to Layer(id = it.id)) }
-        stack.mapNotNull { (b, l) -> if (l.visible) Drawn(l.paintable(project.width, project.height), b, vm.mask(l), vm.patch(l)) else null }
+        stack.mapNotNull { (b, l) ->
+            if (l.visible) Drawn(l.paintable(project.width, project.height), b, vm.mask(l), vm.patch(l)) else null
+        }
     }
 
     val levels = rememberLevels(layers + listOfNotNull(added))
@@ -135,7 +139,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     val targetPatch = targetLayer?.let(vm::patch)
     SideEffect {
         brush.aim(if (tool.value == Tool.Selection) Layer(w = project.width, h = project.height, id = 0) else targetLayer?.paintable(project.width, project.height), project.selection, tool.value,
-            targetBitmap?.asAndroidBitmap(), targetMask, targetPatch)
+            targetBitmap?.asAndroidBitmap(), targetMask, targetPatch, project.width, project.height)
     }
 
     // Precomputed off the main thread: usually ready when Move or "Select pixels" is tapped
@@ -190,12 +194,33 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         transition = TransitionTool(l, options.transition, project.width, project.height, project.selection) { popup != null }
     }
 
+    /** The carousel, its corrections at none */
+    fun openCorrections() {
+        val l = targetLayer ?: return
+        correction = CorrectionTool(l, project.selection, targetBitmap?.asAndroidBitmap(), targetMask, targetPatch)
+    }
+
+    /** A tile's panel; shows the layer if hidden, as Move */
+    fun openCorrection(c: Correction) {
+        if (targetLayer?.visible == false) vm.toggleVisible(target)
+        correction?.open = c
+    }
+
     /** Baked as a brush stroke, the tool open under the indicator until then; nothing to paint — closes */
     fun bake(st: Stroke?, close: () -> Unit) {
         if (st == null) return close()
         applying = true
         vm.stroke(st) { applying = false; close() }
     }
+
+    /** The corrections baked as one brush stroke (Replace color's alone while its panel is open): the editor's panels are back */
+    fun closeCorrections(s: CorrectionTool) = bake(s.stroke(options.correction)) { correction = null }
+
+    /** A tap outside the panel closes it, outside the carousel — closeCorrections */
+    fun tapCorrections(s: CorrectionTool) { if (s.open == null) closeCorrections(s) else s.open = null }
+
+    /** Back closes the panel (Replace color: Cancel), in the carousel drops the corrections */
+    fun backCorrections(s: CorrectionTool) { if (s.open == null) correction = null else s.open = null }
 
     fun requestExit() { if (vm.dirty || vm.baking > 0) dialog = EditorDialog.Exit else vm.closeEditor(false) } // a baking stroke is a change too
 
@@ -257,6 +282,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     BackHandler(transform != null) { if (!busy) closeTransform() }
     BackHandler(fill != null) { if (!applying) fill = null }
     BackHandler(transition != null) { if (!applying) transition = null }
+    BackHandler(correction != null) { if (!applying) correction?.let(::backCorrections) }
     // A blend mode picked in the menu becomes one history step; committed before closing: the canvas never shows the old one in between
     fun closeLayerMenu() {
         project.layers.getOrNull(target)?.let { l -> preview.picked(l)?.let { vm.setBlend(target, it) } }
@@ -268,11 +294,12 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     Box(Modifier.fillMaxSize()) {
         // The canvas is always fullscreen under the panels: zoom and position survive tools
         val frame: CanvasTool<*>? = move ?: crop ?: text ?: transform ?: transition
-        val hidden = frame != null || fill != null // a tool with its own panel
+        val hidden = frame != null || fill != null || correction != null // a tool with its own panel
         val selecting = tool.value == Tool.Selection && !hidden
         CanvasView(picture, frame, select.takeIf { selecting },
             brush.takeIf { tool.value != Tool.Selection && !hidden || selecting && options.selection.style.value == SelectStyle.Brush },
-            project.selection, targetLayer?.id ?: 0L, fill, Modifier.fillMaxSize())
+            project.selection, targetLayer?.id ?: 0L, fill, correction, correction?.takeIf { it.open != Correction.ReplaceColor }?.let { s -> { tapCorrections(s) } },
+            Modifier.fillMaxSize())
         // An unfinished polygon disappears with its style or tool
         if (selecting && options.selection.style.value == SelectStyle.Polygon) DisposableEffect(Unit) { onDispose(select::dropPolygon) }
         transform?.let { s -> LaunchedEffect(s) { s.preview() } }
@@ -286,6 +313,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
                 ActionMenuBtn(ToolPopup.Edit, AppIcons.CutSquare, EditAction.entries, popup?.kind, ::canEdit, ::edit) { popup = it }
                 ActionMenuBtn(ToolPopup.Selection, AppIcons.DottedLine, SelectAction.entries, popup?.kind, ::canSelect, ::selectAction) { popup = it }
                 Spacer(Modifier.weight(1f))
+                IconBtn(AppIcons.SlidersHorizontal) { openCorrections() }
                 ActionMenuBtn(ToolPopup.Tools3, AppIcons.Menu, Tools3Action.entries, popup?.kind, ::canTools3, ::tools3Action) { popup = it }
                 IconBtn(AppIcons.Move) {
                     if (targetLayer?.hasImage == true && (project.selection != null || box != null)) {
@@ -343,6 +371,11 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         // Likewise until baked as a brush stroke
         fill?.let { s -> FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) { bake(s.stroke()) { fill = null } } }
         transition?.let { s -> TransitionOverlay(s, { popup = it }, { transition = null }) { bake(s.stroke()) { transition = null } } }
+        // A tile's panel takes the carousel's place, closed by a tap on the canvas: zoom stays available; a tap with the carousel shown bakes, open under the
+        // indicator until then
+        CorrectionCarousel(correction.let { it != null && it.open == null }, Modifier.align(Alignment.BottomCenter), ::openCorrection)
+        // Replace color's ✓ likewise, its Cancel brings the carousel back with the rest
+        correction?.let { s -> CorrectionOverlay(s, options.correction, picture, popup?.kind, { popup = it }, { s.open = null }) { closeCorrections(s) } }
         // Popovers' press-outside layer, permanent (see dismissOnPress)
         Box(Modifier.fillMaxSize().dismissOnPress { closeLayerMenu(); popup = null })
         layerMenu?.let { anchor ->

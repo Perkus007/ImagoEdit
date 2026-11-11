@@ -1,5 +1,13 @@
 package com.perkus.imagoedit.ui.menu
 
+import android.app.Activity
+import android.content.ContentResolver
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.util.Size
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -17,11 +25,13 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -41,11 +51,33 @@ import com.perkus.imagoedit.ui.theme.ScreenBg
 import com.perkus.imagoedit.ui.theme.SmallShape
 import kotlin.math.sqrt
 
-/** A new canvas or a new size: [width]×[height] at first */
+private object PickImage : ActivityResultContract<String, Uri?>() {
+    override fun createIntent(context: Context, input: String): Intent = Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), input)
+    override fun parseResult(resultCode: Int, intent: Intent?): Uri? = intent?.data.takeIf { resultCode == Activity.RESULT_OK }
+}
+
+/** The import button's action: as is or reduced (AppViewModel.reducing), then the picker; [onPicked] gets that choice.
+Shows its own dialog: the launcher stays composed while the picker is open. The choice is saved: the picker may outlive the Activity */
 @Composable
-fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit, busy: Boolean = false, onOk: (width: Int, height: Int) -> Unit) {
+fun rememberImagePicker(onPicked: (ContentResolver, Uri, reduce: Boolean) -> Unit): () -> Unit {
+    val resolver = LocalContext.current.applicationContext.contentResolver
+    val title = stringResource(R.string.choose_app)
+    var choosing by remember { mutableStateOf(false) }
+    var reduce by rememberSaveable { mutableStateOf(false) }
+    val launcher = rememberLauncherForActivityResult(PickImage) { uri -> uri?.let { onPicked(resolver, it, reduce) } }
+    if (choosing) AppDialog(stringResource(R.string.import_image), { choosing = false }, width = null) {
+        listOf(R.string.import_as_is to false, R.string.import_reduced to true).forEach { (label, r) ->
+            DialogButton(stringResource(label), BtnGray, Modifier.fillMaxWidth()) { choosing = false; reduce = r; launcher.launch(title) }
+        }
+    }
+    return remember { { choosing = true } }
+}
+
+/** A new canvas or a new size: [width]×[height] at first. [image] — an import's original: its proportions kept, never exceeded */
+@Composable
+fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit, busy: Boolean = false, image: Size? = null, onOk: (width: Int, height: Int) -> Unit) {
     val dims = remember { mutableStateListOf(width, height) }
-    var link by remember { mutableStateOf<List<Int>?>(listOf(width, height)) } // kept ratio; null — free
+    var link by remember { mutableStateOf<List<Int>?>(listOf(image?.width ?: width, image?.height ?: height)) } // kept ratio; null — free
 
     /** Side [i] → [v] within the limits. Free: the other shrinks to keep MAX_PIXELS; linked: it follows the ratio, [v] limited so both fit (no coerceIn:
     an unholdable ratio like 1×16000 must not throw) */
@@ -58,12 +90,13 @@ fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit,
         }
         val a = l[1 - i].toLong() // the other side per b px of this one
         val b = l[i].toLong()
-        val hi = minOf(MAX_SIDE.toLong(), MAX_SIDE * b / a, sqrt(MAX_PIXELS * b / a.toDouble()).toLong())
+        val hi = minOf(MAX_SIDE.toLong(), MAX_SIDE * b / a, sqrt(MAX_PIXELS * b / a.toDouble()).toLong(), if (image != null) b else Long.MAX_VALUE) // an import isn't enlarged
         dims[i] = v.toLong().coerceAtMost(hi).coerceAtLeast(maxOf(MIN_SIDE.toLong(), (MIN_SIDE * b + a - 1) / a)).toInt()
         dims[1 - i] = ((dims[i] * a + b / 2) / b).toInt().coerceIn(MIN_SIDE, minOf(MAX_SIDE, MAX_PIXELS / dims[i]))
     }
 
     AppDialog(stringResource(title), onDismiss, width = 448.dp, busy = busy) {
+        if (image != null) Text(stringResource(R.string.import_original, image.width, image.height, image.width.toLong() * image.height / 1e6f), fontSize = 16.sp, textAlign = TextAlign.Center)
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 listOf(R.string.width, R.string.height).forEachIndexed { i, label ->
@@ -76,10 +109,13 @@ fun CanvasSizeDialog(title: Int, width: Int, height: Int, onDismiss: () -> Unit,
                     }
                 }
             }
-            Icon(if (link == null) AppIcons.UnlinkVertical else AppIcons.LinkVertical, null,
+            if (image == null) Icon(if (link == null) AppIcons.UnlinkVertical else AppIcons.LinkVertical, null,
                 Modifier.clip(SmallShape).background(BtnGray).clickable { link = if (link == null) dims.toList() else null }.padding(4.dp).size(24.dp), Color.White)
+            else Text(stringResource(R.string.import_mp, dims[0].toLong() * dims[1] / 1e6f), fontSize = 18.sp)
         }
-        Text(stringResource(R.string.canvas_limit, MAX_PIXELS / 1_000_000, SAFE_PIXELS / 1_000_000), Modifier.fillMaxWidth(), fontSize = 14.sp, textAlign = TextAlign.Center)
+        // An import's sizes are within the limits anyway: no maximum line
+        Text((if (image == null) stringResource(R.string.canvas_max, MAX_PIXELS / 1_000_000) + "\n" else "") + stringResource(R.string.canvas_limit, SAFE_PIXELS / 1_000_000),
+            Modifier.fillMaxWidth(), fontSize = 14.sp, textAlign = TextAlign.Center)
         DialogButton(stringResource(R.string.ok), BtnGreen, Modifier.fillMaxWidth()) { onOk(dims[0], dims[1]) }
     }
 }

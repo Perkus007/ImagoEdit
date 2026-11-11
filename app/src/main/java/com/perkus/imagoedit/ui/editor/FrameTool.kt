@@ -208,6 +208,9 @@ abstract class CanvasTool<S> {
         before = null
     }
 
+    /** A quick second tap, inside its gesture: a change made via hold, recorded by finish */
+    open fun doubleTap() {}
+
     /** The canvas origin at (0, 0), [s] screen px per canvas px */
     abstract fun DrawScope.drawOverlay(s: Float)
 }

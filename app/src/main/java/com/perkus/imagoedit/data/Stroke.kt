@@ -32,10 +32,14 @@ class Clone(val dx: Int, val dy: Int, val heal: Boolean)
 
 /** [layer] — Layer.id; [file] — its pixels at the start; [color] null — erases, unless [clone], [blur], [smudge]. [xy] — dab centers and [r] — file px;
 [area] — the selection at the start. [select] — Selection brush: canvas px, [layer] 0, joined to the selection. [figure] — Fill/Stroke, Transition (erases): covers in place of dabs.
-[blur] > 0 — Blur Area, σ file px; [smudge] — Blur Finger, Smear.keep; [smeared] — its live smudge, if at the bake's raster */
+[blur] > 0 — Blur Area, σ file px; [smudge] — Blur Finger, Smear.keep; [smeared] — its live smudge, if at the bake's raster; [tone], [recolor], [relight] — Correction:
+the layer's own px through it */
 class Stroke(val layer: Long, val file: String?, val color: Int?, val xy: FloatArray = FloatArray(0), val r: Float = 0f, val hardness: Float = 1f, val flow: Float = 1f,
     val opacity: Float = 1f, val area: Selection?, val clone: Clone? = null, val select: Region.Op? = null, val figure: Figure? = null,
-    val blur: Float = 0f, val smudge: Float? = null, val smeared: Smeared? = null)
+    val blur: Float = 0f, val smudge: Float? = null, val smeared: Smeared? = null, val tone: Tone? = null, val recolor: Recolor? = null, val relight: Relight? = null) {
+    /** Puts px, not only erases */
+    val paints get() = color != null || clone != null || blur > 0f || smudge != null || tone != null || recolor != null || relight != null
+}
 
 /** Fill/Stroke side; name is persisted */
 enum class StrokeSide { Outside, Center, Inside }
@@ -71,13 +75,26 @@ class Figure(val path: Path, val side: StrokeSide? = null, val width: Float = 0f
     }
 }
 
-/** The canvas rect layer [l] must cover for the figure to land whole: its own ∪ the figure's reach within canvas and selection; null — it already does */
+/** The canvas rect layer [l] must cover for the stroke to land whole, its reach taken within canvas and selection: a figure's ∪ its own; painting dabs' (Area blur:
+with the px it reads) — the whole canvas ∪ its own, at once: later strokes don't grow it again. null — it already does */
 fun Stroke.room(l: Layer, cw: Int, ch: Int): Rect? {
-    val f = figure ?: return null
-    val r = Rect().also { f.reach().roundOut(it) }
+    val reach = figure?.reach() ?: if (!paints) return null else RectF().apply {
+        val m = r + 3 * blur
+        for (i in 0 until xy.size / 2) union(xy[2 * i] - m, xy[2 * i + 1] - m, xy[2 * i] + m, xy[2 * i + 1] + m)
+        l.fileToCanvas().mapRect(this)
+    }
+    val need = Rect().also { reach.roundOut(it) }
     val own = Rect(l.x, l.y, l.x + l.w, l.y + l.h)
-    if (!r.intersect(0, 0, cw, ch) || area?.let { r.intersect(it.reach.bounds) } == false || own.contains(r)) return null
-    return r.apply { union(own) }
+    if (!need.intersect(0, 0, cw, ch) || area?.let { need.intersect(it.reach.bounds) } == false || own.contains(need)) return null
+    return (if (figure == null) Rect(0, 0, cw, ch) else need).apply { union(own) }
+}
+
+/** The same stroke on [to], whose px lie where [from]'s did (room grew it): file px ([xy], [clone]) carried over. The live smudge stays behind: it's on [from]'s raster */
+fun Stroke.rebased(from: Layer, to: Layer): Stroke {
+    val m = from.fileToCanvas().apply { postConcat(to.canvasToFile()) }
+    val p = xy.copyOf().also { m.mapPoints(it) }
+    val c = clone?.let { cl -> floatArrayOf(cl.dx.toFloat(), cl.dy.toFloat()).let { v -> m.mapVectors(v); Clone(v[0].roundToInt(), v[1].roundToInt(), cl.heal) } }
+    return Stroke(layer, to.file, color, p, r, hardness, flow, opacity, area, c, select, figure, blur, smudge, tone = tone, recolor = recolor, relight = relight)
 }
 
 private const val TIP_LUT = 1024 // ступени профиля по квадрату расстояния до центра даба
@@ -123,7 +140,8 @@ class Dab(val hardness: Float, val flow: Float) {
 }
 
 /** Tile by tile: dabs (Dab: visits) or the figure into a draft (× soft selection edge), the draft onto the tile with [opacity]: the draft builds up to it, never past.
-Clone — the layer's own px through the draft; healing — toward the healed px (Heal.kt); blur — lerp toward the blurred or smudged layer (smudge coverage is hard).
+Clone — the layer's own px through the draft; healing — toward the healed px (Heal.kt); blur — lerp toward the blurred or smudged layer (smudge coverage is hard), tone,
+recolor, relight — toward the layer through it (recolor, relight without tone: only tiles with px they change).
 Painting, cloning, blurring → patch (a new tile starts as base × mask, the mask tile becomes cutOut); erasing → patch where it has a tile, else mask.
 null — nothing reaches the layer; else the new mask and patch */
 fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId: String, patchId: String): Pair<LayerMask?, Tiles?>? {
@@ -147,7 +165,6 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
     }
     val ink = color
     val from = clone
-    val paints = ink != null || from != null || blur > 0f || smudge != null
     val patched = patch?.levels?.get(0)
     val erased = mask?.levels?.get(0)
     val clip = rects?.let { Path().apply { for (k in it.indices step 4) addRect(it[k].toFloat(), it[k + 1].toFloat(), it[k + 2].toFloat(), it[k + 3].toFloat(), Path.Direction.CW) } }
@@ -174,6 +191,7 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
         val keepDraft = keepPaint()
         val draft = blankMaskTile()
         val raw by lazy(LazyThreadSafetyMode.NONE) { ByteArray(4 * TILE * TILE) }
+        val joinedHere by lazy(LazyThreadSafetyMode.NONE) { ByteArray(TILE * TILE) } // Recolor's Joined.at
 
         /** The source the draft lets through */
         fun under() = scratch ?: patchTile(base).also { scratch = it }
@@ -257,6 +275,21 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
             probe.recycle()
             blank.recycle()
         }
+        // A tile kept as it was stays out of the patch: no RAM, file or history weight. Contiguous: only px joined to the seeds, over the selection's bounds;
+        // Highlights, Shadows: by the surroundings within them
+        val rendered = { wk: Int, x: Int, y: Int -> worker(wk).run { under().also { render(it, x, y) } } }
+        val joined = recolor?.joined(area.fileRect(l), toFile, rendered)
+        val around = relight?.takeIf { it.local }?.let { surroundings(area.fileRect(l), rendered) }
+        if (tone == null && (recolor != null || relight != null)) {
+            val at = touched.indices.filter { touched[it] }
+            parallel(at.size) { wk, i ->
+                val k = at[i]
+                val x = k % cols * TILE
+                val y = k / cols * TILE
+                touched[k] = if (joined != null) joined.at(x, y, worker(wk).joinedHere)
+                else rendered(wk, x, y).let { u -> recolor?.swap(u, null) ?: relight?.adjust(u, null, x, y, 1, around) == true }
+            }
+        }
         val toPatch = BooleanArray(touched.size) { touched[it] && (paints || patched?.get(it) != null) }
         val toMask = BooleanArray(touched.size) { touched[it] && base != null && patched?.get(it) == null }
         if (toPatch.none { it } && toMask.none { it }) return null
@@ -267,7 +300,7 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
         // onMask: e + (1 − e)·opacity·stroke
         val onPatch = Paint().apply { if (ink != null) color = ink; alpha = a; if (!paints) xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
         val onMask = Paint().apply { alpha = a }
-        // Blur lerp: DST_OUT the draft, then ADD the source × draft
+        // Blur, tone lerp: DST_OUT the draft, then ADD the source × draft
         val takeOut = Paint().apply { alpha = a; xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
         val addIn = tilePaint().apply { alpha = a; xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD) }
         val copy = tilePaint()
@@ -284,12 +317,17 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
             }, x0, y0, w, h) {
                 when {
                     heal != null -> Unit
-                    from != null || blurred != null || smear != null -> {
+                    from != null || blurred != null || smear != null || tone != null || recolor != null || relight != null -> {
                         val under = v.under()
                         when {
                             from != null -> v.render(under, x0 + from.dx, y0 + from.dy)
                             smear != null -> { v.render(under, x0, y0); smear.into(under, x0, y0, ks, v.raw) }
                             blurred != null -> blurred.into(under, x0, y0, v::render)
+                            else -> {
+                                v.render(under, x0, y0)
+                                recolor?.swap(under, under, joined?.let { j -> v.joinedHere.also { j.at(x0, y0, it) } })
+                                relight?.adjust(under, under, x0, y0, 1, around)
+                            }
                         }
                         // Skia's software canvas draws an ALPHA_8 bitmap as coverage (DST_IN keeps everything): the draft goes in as a shader over a rect
                         v.cover(v.draft, x0, y0)
@@ -297,7 +335,8 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
                         v.src.setBitmap(under)
                         v.src.drawRect(0f, 0f, TILE.toFloat(), TILE.toFloat(), v.keepDraft)
                         if (from == null) it.drawBitmap(v.draft, x0.toFloat(), y0.toFloat(), takeOut)
-                        it.drawBitmap(under, x0.toFloat(), y0.toFloat(), if (from == null) addIn else onPatch)
+                        if (tone != null) tone.add(it, { c -> c.drawBitmap(under, x0.toFloat(), y0.toFloat(), null) })
+                        else it.drawBitmap(under, x0.toFloat(), y0.toFloat(), if (from == null) addIn else onPatch)
                     }
                     else -> v.dabs(it, x0, y0, onPatch)
                 }

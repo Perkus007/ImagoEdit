@@ -55,7 +55,7 @@ internal fun parallel(n: Int, work: (worker: Int, i: Int) -> Unit) {
 /** Tiles along a side of [len] file px at level [n] (2ⁿ× smaller) */
 internal fun tilesAlong(len: Int, n: Int) = (((len + (1 shl n) - 1) shr n) + TILE - 1) / TILE
 
-private fun levelCount(w: Int, h: Int): Int {
+internal fun levelCount(w: Int, h: Int): Int {
     var n = 0
     while (tilesAlong(w, n) > 1 || tilesAlong(h, n) > 1) n++
     return n + 1
@@ -67,7 +67,7 @@ private fun valid(len: Int, n: Int, start: Int) = minOf(TILE, ((len + (1 shl n) 
 private val Bitmap.bpp get() = if (config == Bitmap.Config.ALPHA_8) 1 else 4
 
 /** Past the layer's edge ([vw]×[vh]) the edge px repeat: filtered sampling sees the edge, as a clamped texture */
-private fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
+internal fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
     val row = TILE * bpp
     val pad = (TILE - vw) * bpp
     if (pad > 0) for (y in 0 until vh) {
@@ -103,15 +103,15 @@ class Tiles(val id: String, val w: Int, val h: Int, val levels: List<Array<Bitma
 /** Paint() anti-aliases since API 31: shared tile edges would show a grid */
 fun tilePaint() = Paint().apply { isAntiAlias = false }
 
-/** [unit] px per tile px; [blank] — paints a missing tile's rect, null — skipped */
-fun Canvas.drawTiles(tiles: Array<Bitmap?>, cols: Int, unit: Float, paint: Paint, r: RectF, blank: Paint? = null) {
+/** [unit] px per tile px, tile 0 at ([x0], [y0]); [blank] — paints a missing tile's rect, null — skipped */
+fun Canvas.drawTiles(tiles: Array<Bitmap?>, cols: Int, unit: Float, paint: Paint, r: RectF, blank: Paint? = null, x0: Float = 0f, y0: Float = 0f) {
     val side = TILE * unit
     for (k in tiles.indices) {
         val t = tiles[k]
         if (t == null && blank == null) continue
         val c = k % cols
         val row = k / cols
-        r.set(c * side, row * side, (c + 1) * side, (row + 1) * side)
+        r.set(x0 + c * side, y0 + row * side, x0 + (c + 1) * side, y0 + (row + 1) * side)
         if (quickReject(r.left, r.top, r.right, r.bottom)) continue
         if (t != null) drawBitmap(t, null, r, paint) else if (blank != null) drawRect(r, blank)
     }
@@ -220,7 +220,8 @@ internal inline fun tileDrawn(old: Bitmap?, blank: () -> Bitmap, x: Int, y: Int,
     return t
 }
 
-private fun built(id: String, w: Int, h: Int, tiles: Array<Bitmap?>): Tiles? {
+/** Level 0 [tiles] with their smaller copies; none → null */
+internal fun built(id: String, w: Int, h: Int, tiles: Array<Bitmap?>): Tiles? {
     val all = BooleanArray(tiles.size) { tiles[it] != null }
     if (all.none { it }) return null
     val levels = List(levelCount(w, h)) { n -> if (n == 0) tiles else arrayOfNulls<Bitmap>(tilesAlong(w, n) * tilesAlong(h, n)) }

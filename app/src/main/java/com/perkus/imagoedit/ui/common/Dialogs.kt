@@ -216,7 +216,7 @@ fun RecoveryDialog(onAnswer: (restore: Boolean) -> Unit) = AppDialog(stringResou
 @Composable
 fun TooLargeDialog(e: TooLarge, onAnswer: (reduce: Boolean) -> Unit) = AppDialog(stringResource(R.string.too_large_title), onDismiss = { onAnswer(false) }) {
     val s = e.size
-    Text(stringResource(R.string.too_large_text, s.width, s.height, s.width.toLong() * s.height / 1e6f, MAX_PIXELS / 1_000_000, MAX_SIDE, e.fit.width, e.fit.height), fontSize = 14.sp, textAlign = TextAlign.Center)
+    Text(stringResource(R.string.too_large_text, s.width, s.height, s.width.toLong() * s.height / 1e6f, MAX_PIXELS / 1_000_000, MAX_SIDE), fontSize = 14.sp, textAlign = TextAlign.Center)
     OkCancel({ onAnswer(false) }) { onAnswer(true) }
 }
 

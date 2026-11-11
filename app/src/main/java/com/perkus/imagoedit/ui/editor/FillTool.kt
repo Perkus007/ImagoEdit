@@ -121,14 +121,13 @@ fun FillOverlay(s: FillTool, picture: PipetteSource, open: ToolPopup?, onPopup: 
         val o = s.options
         val stroke = o.mode.value == FillMode.Stroke
         BottomPanel(stroke, null, Modifier, buttons = {
-            // Read in the draw phase: follows the color panel live
-            RoundBtn(null, false, { o.color.value }, Modifier, BTN) { onPopup(colorPopup(o.color, ColorOpacity(o.opacity), picture, it)) }
+            ColorBtn(o.color, ColorOpacity(o.opacity), picture, onPopup, Modifier, BTN)
             FillMode.entries.forEach { m -> ToggleBtn(m.icon, m == o.mode.value) { o.mode.value = m } }
             // While filling none shows chosen; the side stays saved
             StrokeSide.entries.forEach { d -> ToggleBtn(d.icon, stroke && d == o.side.value, enabled = stroke) { o.setSide(d) } }
             ConfirmButtons(onCancel, onConfirm)
         }) {
-            PxSlider({ FieldText(stringResource(R.string.width)) }, o.width.value, o.width.range, Modifier.width(ROW_W), onChange = o::setWidth, onApply = o::setWidth)
+            PanelSlider({ FieldText(stringResource(R.string.width)) }, o.width.value, o.width.range, Modifier.width(ROW_W), onChange = o::setWidth, onApply = o::setWidth)
         }
     }
 }

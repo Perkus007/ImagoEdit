@@ -33,24 +33,35 @@ fun File.decodeImage(mutable: Boolean = false, header: (ImageDecoder, Size) -> U
         header(d, info.size)
     }
 
-/** Reduced in proportion to MAX_SIDE and MAX_PIXELS; within them — as is */
-private fun fitted(s: Size): Size {
+/** Reduced in proportion to MAX_SIDE and MAX_PIXELS; within them — as is. Too small then → BadImageSize */
+fun fitted(s: Size): Size {
     val k = minOf(1.0, MAX_SIDE.toDouble() / maxOf(s.width, s.height), sqrt(MAX_PIXELS.toDouble() / (s.width.toLong() * s.height)))
-    return if (k == 1.0) s else Size((s.width * k).toInt(), (s.height * k).toInt())
+    // + 1e-6: the limiting side gets MAX_SIDE exactly despite rounding in k
+    val fit = if (k == 1.0) s else Size((s.width * k + 1e-6).toInt(), (s.height * k + 1e-6).toInt())
+    if (minOf(fit.width, fit.height) < MIN_SIDE) throw BadImageSize(s.width, s.height)
+    return fit
+}
+
+private class Header(val size: Size) : RuntimeException()
+
+/** Only the header is read (decoding stops there): the size, EXIF orientation applied */
+fun ContentResolver.imageSize(uri: Uri): Size = try {
+    ImageDecoder.decodeBitmap(ImageDecoder.createSource(this, uri)) { _, info, _ -> throw Header(info.size) }
+    throw IllegalStateException()
+} catch (h: Header) {
+    h.size
 }
 
 /** A layer at (0, 0) and its pixels: the original copied byte-for-byte, unless reduced or 16-bit — then its 8-bit pixels (a layer's file decodes exactly to them).
-Over the limits → TooLarge; with [reduce] reduced */
-fun ProjectStore.importImage(resolver: ContentResolver, uri: Uri, reduce: Boolean): Pair<Layer, Bitmap> {
+[size] null: as is, over the limits → TooLarge; else decoded at [size] (the image's proportions, within the limits) */
+fun ProjectStore.importImage(resolver: ContentResolver, uri: Uri, size: Size?): Pair<Layer, Bitmap> {
     val src = newStaged(resolver.getType(uri))
     return src.deleteOnFailure {
         resolver.openInputStream(uri)!!.use { i -> src.outputStream().use { i.copyTo(it, IO_BUFFER) } }
         var reduced = false
         val img = src.decodeImage { d, s ->
-            val fit = fitted(s)
-            if (minOf(fit.width, fit.height) < MIN_SIDE) throw BadImageSize(s.width, s.height)
+            val fit = size ?: fitted(s).also { if (it != s) throw TooLarge(s, it) }
             if (fit != s) {
-                if (!reduce) throw TooLarge(s, fit)
                 d.setTargetSize(fit.width, fit.height)
                 reduced = true
             }

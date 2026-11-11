@@ -10,6 +10,7 @@ import android.graphics.Region
 import android.net.Uri
 import android.util.Log
 import android.util.LruCache
+import android.util.Size
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -37,6 +38,7 @@ import com.perkus.imagoedit.data.Selection
 import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.TextLayout
 import com.perkus.imagoedit.data.Tiles
+import com.perkus.imagoedit.data.TooLarge
 import com.perkus.imagoedit.data.bake
 import com.perkus.imagoedit.data.bytesBeyond
 import com.perkus.imagoedit.data.cleared
@@ -46,9 +48,11 @@ import com.perkus.imagoedit.data.fileH
 import com.perkus.imagoedit.data.fileToCanvas
 import com.perkus.imagoedit.data.fileW
 import com.perkus.imagoedit.data.files
+import com.perkus.imagoedit.data.fitted
 import com.perkus.imagoedit.data.fontsDir
 import com.perkus.imagoedit.data.grown
 import com.perkus.imagoedit.data.hasImage
+import com.perkus.imagoedit.data.imageSize
 import com.perkus.imagoedit.data.importImage
 import com.perkus.imagoedit.data.inverted
 import com.perkus.imagoedit.data.laid
@@ -57,6 +61,7 @@ import com.perkus.imagoedit.data.movedIndex
 import com.perkus.imagoedit.data.newLayerId
 import com.perkus.imagoedit.data.paintable
 import com.perkus.imagoedit.data.persisted
+import com.perkus.imagoedit.data.rebased
 import com.perkus.imagoedit.data.region
 import com.perkus.imagoedit.data.room
 import com.perkus.imagoedit.data.selected
@@ -126,7 +131,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private var autosaving: Job? = null
     private val doomed = HashSet<String>() // discarded after the next recovery write (see release)
 
-    private var reimport = {} // the user's yes to TooLarge
+    private var reimport: (Size) -> Unit = {} // the import awaiting the reduction dialog's size
+
+    /** The picked image's size and its largest within the limits; the reduction dialog shows while set (also after yes to TooLarge) */
+    var reducing by mutableStateOf<Pair<Size, Size>?>(null)
+        private set
 
     var busy by mutableStateOf(false)
         private set
@@ -139,6 +148,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Strokes not yet in history: no other off-main work starts; Undo/Redo and closing wait (whenBaked) */
     val baking get() = strokes.size
     private val afterBake = ArrayList<() -> Unit>()
+
+    /** Layers a stroke grew (Stroke.room), by Layer.file before: the layer as it was and its new file. Strokes drawn on it meanwhile are carried onto the grown one */
+    private val regrown = HashMap<String?, Pair<Layer, String>>()
 
     /** Whole data classes compared: reverting everything = no changes; session-only state doesn't count */
     val dirty get() = editing?.persisted?.let { e -> projects.none { it == e } } ?: false
@@ -225,10 +237,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun dismissError() { error = null }
 
-    /** The user's answer to TooLarge: [reduce] → the same import, reduced */
+    /** The user's answer to TooLarge: [reduce] → the reduction dialog at the fit */
     fun resolveTooLarge(reduce: Boolean) {
+        val e = error as? TooLarge ?: return
         error = null
-        if (reduce) reimport()
+        if (reduce) reducing = e.size to e.fit
+    }
+
+    /** The reduction dialog's answer: the import at [size]; null — dropped */
+    fun resolveImport(size: Size?) {
+        reducing = null
+        size?.let(reimport)
     }
 
     fun open(p: Project) = runBusy(io, "open", { store.loadLayers(p).let { it to store.loadTiles(p, it) } }) { (bitmaps, ts) ->
@@ -257,20 +276,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** On the write queue (io): its staging file can't collide with an earlier sweep or save. Over the limits → TooLarge */
-    private fun <T> runImport(resolver: ContentResolver, uri: Uri, map: (Pair<Layer, Bitmap>) -> T, reduce: Boolean = false, onOk: (T) -> Unit) {
-        reimport = { runImport(resolver, uri, map, reduce = true, onOk) }
-        runBusy(io, "import", { map(store.importImage(resolver, uri, reduce)) }, onOk)
+    /** On the write queue (io): its staging file can't collide with an earlier sweep or save. As is: over the limits → TooLarge.
+    [reduce]: only the header first, then the reduction dialog; both continue via reimport */
+    private fun <T> runImport(resolver: ContentResolver, uri: Uri, reduce: Boolean, map: (Pair<Layer, Bitmap>) -> T, onOk: (T) -> Unit) {
+        val load = { size: Size? -> runBusy(io, "import", { map(store.importImage(resolver, uri, size)) }, onOk) }
+        reimport = load
+        if (reduce) runBusy(Dispatchers.IO, "header", { resolver.imageSize(uri).let { it to fitted(it) } }) { reducing = it } else load(null)
     }
 
-    fun importImage(resolver: ContentResolver, uri: Uri) = runImport(resolver, uri, { it }) { create(it.first.w, it.first.h, it) }
+    fun importImage(resolver: ContentResolver, uri: Uri, reduce: Boolean) = runImport(resolver, uri, reduce, { it }) { create(it.first.w, it.first.h, it) }
 
     /** refreshAccess() after closing and before import: the first staging sweep must be queued earlier, or onResume would delete the new project's file */
     fun openExternal(resolver: ContentResolver, uri: Uri) = whenBaked {
         if (busy) return@whenBaked
         if (editing != null) closeEditor(save = dirty)
         refreshAccess()
-        importImage(resolver, uri)
+        importImage(resolver, uri, false)
     }
 
     fun closeEditor(save: Boolean, asCopy: Boolean = false) = whenBaked {
@@ -293,11 +314,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         layers = emptyList()
         parked.evictAll()
         tiles.clear()
+        regrown.clear()
     }
 
-    fun addImage(resolver: ContentResolver, uri: Uri) {
+    fun addImage(resolver: ContentResolver, uri: Uri, reduce: Boolean) {
         val p = editing ?: return
-        runImport(resolver, uri, { (l, bmp) ->
+        runImport(resolver, uri, reduce, { (l, bmp) ->
             // Integer offset: pixels land exactly on canvas px
             PendingImage(l.copy(x = (p.width - l.w) / 2, y = (p.height - l.h) / 2), bmp, p.layers.size)
         }) { pending = it }
@@ -646,21 +668,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (strokes.size == 1) bakeNext()
     }
 
-    /** The layer is found by id; its pixels changed meanwhile → dropped. A selection stroke joins the selection as it is at its turn */
+    /** The layer is found by id; its pixels changed meanwhile (not by a stroke growing it) → dropped. A selection stroke joins the selection as it is at its turn */
     private fun bakeNext() {
-        val s = strokes.first().first
+        val drawn = strokes.first().first
         val e = editing ?: return baked()
-        if (s.select != null) return bakeOff({ s.selected(e.width, e.height, e.selection) }) { r -> (editing?.selection === e.selection).also { if (it) select(r) } }
-        val i = e.layers.indexOfFirst { it.id == s.layer }
-        val l = e.layers.getOrNull(i)?.takeIf { it.file == s.file } ?: return baked()
+        if (drawn.select != null) return bakeOff({ drawn.selected(e.width, e.height, e.selection) }) { r -> (editing?.selection === e.selection).also { if (it) select(r) } }
+        val i = e.layers.indexOfFirst { it.id == drawn.layer }
+        val l = e.layers.getOrNull(i) ?: return baked()
+        var f = drawn.file
+        while (f != l.file) f = regrown[f]?.second ?: return baked()
+        val at = l.paintable(e.width, e.height)
+        val s = if (drawn.file == l.file) drawn else drawn.rebased(regrown.getValue(drawn.file).first, at)
         val base = layers[i]?.asAndroidBitmap()
         val m = mask(l)
         val p = patch(l)
-        val at = l.paintable(e.width, e.height)
-        // A figure past the layer: the layer grows to hold it first
+        // A stroke past the layer: the layer grows to hold it first
         bakeOff({
             val g = s.room(at, e.width, e.height)?.let { store.grownLayer(at, base, m, p, it) }
-            g to s.bake(g?.first ?: at, g?.second ?: base, m.takeIf { g == null }, p.takeIf { g == null }, store.stagedName(MASK), store.stagedName(PATCH))
+            g to (g?.let { s.rebased(at, it.first) } ?: s).bake(g?.first ?: at, g?.second ?: base, m.takeIf { g == null }, p.takeIf { g == null }, store.stagedName(MASK),
+                store.stagedName(PATCH))
         }) { (g, r) -> putStroke(s, l, g, r) }
     }
 
@@ -673,7 +699,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** [grown] — the layer grown to hold a figure (new file, pixels). false — mask or patch changed meanwhile: bake again */
+    /** [grown] — the layer grown to hold the stroke (new file, pixels). false — mask or patch changed meanwhile: bake again */
     private fun putStroke(s: Stroke, was: Layer, grown: Pair<Layer, Bitmap>?, r: Pair<LayerMask?, Tiles?>?): Boolean {
         val e = editing
         val at = e?.layers?.indexOfFirst { it.id == s.layer } ?: -1
@@ -686,6 +712,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val (m, p) = r
         m?.let { tiles[it.id] = it }
         p?.let { tiles[it.id] = it }
+        grown?.first?.file?.let { regrown[l.file] = l.paintable(e.width, e.height) to it }
         val g = grown?.first?.copy(visible = l.visible, opacity = l.opacity, blend = l.blend, id = l.id) ?: l.paintable(e.width, e.height)
         edit(e.copy(layers = e.layers.putAt(at, g.copy(mask = m?.id, patch = p?.id))), grown?.let { layers.putAt(at, it.second.asImageBitmap()) } ?: layers)
         return true

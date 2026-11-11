@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.util.Size
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
@@ -25,6 +26,7 @@ import com.perkus.imagoedit.ui.common.ScreenFrame
 import com.perkus.imagoedit.ui.common.TooLargeDialog
 import com.perkus.imagoedit.ui.common.hideSystemBars
 import com.perkus.imagoedit.ui.editor.EditorScreen
+import com.perkus.imagoedit.ui.menu.CanvasSizeDialog
 import com.perkus.imagoedit.ui.menu.MainMenuScreen
 import com.perkus.imagoedit.ui.theme.ImagoEditTheme
 
@@ -45,6 +47,9 @@ class MainActivity : ComponentActivity() {
                         // Keyed: the editor's remembered state belongs to one project
                         if (editing != null) key(editing.id) { EditorScreen(vm, editing) } else MainMenuScreen(vm)
                         if (vm.recovered != null && !vm.busy) RecoveryDialog(vm::resolveRecovery) // not while busy: open() wouldn't start
+                        vm.reducing?.let { (size, fit) ->
+                            CanvasSizeDialog(R.string.import_reduce_title, fit.width, fit.height, { vm.resolveImport(null) }, image = size) { w, h -> vm.resolveImport(Size(w, h)) }
+                        }
                         vm.error?.let { if (it is TooLarge) TooLargeDialog(it, vm::resolveTooLarge) else ErrorDialog(it, vm::dismissError) }
                     }
                 }

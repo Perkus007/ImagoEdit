@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -107,6 +108,9 @@ private val PRESETS = listOf(
 interface PipetteSource {
     fun DrawScope.drawAround(focus: Offset, zoom: Float)
     fun colorAt(p: Offset): Color?
+
+    /** Canvas px */
+    fun canvasAt(p: Offset): Offset
 }
 
 /** HSV: hue and saturation survive gray and black, the sliders don't jump. [saved] — newest first */
@@ -118,6 +122,9 @@ class ColorOptions(private val settings: AppSettings, private val key: String) {
     var saved by mutableStateOf(loadSaved())
         private set
 
+    /** Canvas px the pipette last took a color at; session only */
+    var picked by mutableStateOf<Offset?>(null)
+
     var value: Color
         get() = Color.hsv(hue.value, sat.value / 100f, bright.value / 100f)
         set(c) {
@@ -128,6 +135,9 @@ class ColorOptions(private val settings: AppSettings, private val key: String) {
             }
             bright.value = hsv[2] * 100f
         }
+
+    /** At [opacity]; none — opaque */
+    fun shown(opacity: ColorOpacity?) = value.copy(alpha = (opacity?.value?.invoke() ?: MAX_OPACITY) / MAX_OPACITY.toFloat())
 
     fun save() {
         saved = listOf(value) + saved.dropLast(1)
@@ -145,15 +155,15 @@ class ColorOpacity(val value: () -> Int, val finish: () -> Unit = {}, val slide:
     constructor(o: IntOption) : this({ o.value }, slide = { o.value = it })
 }
 
-/** Slides up to the host Box's bottom on opening, down on closing (ToolPopover) */
-fun colorPopup(o: ColorOptions, opacity: ColorOpacity, source: PipetteSource, anchor: Rect): OpenPopup {
+/** Slides up to the host Box's bottom on opening, down on closing (ToolPopover). [opacity] null — no opacity slider */
+fun colorPopup(o: ColorOptions, opacity: ColorOpacity?, source: PipetteSource, anchor: Rect): OpenPopup {
     val shown = MutableTransitionState(false).apply { targetState = true }
     return OpenPopup(ToolPopup.Color, anchor, shown) { ColorSelectionPanel(o, opacity, source, shown) }
 }
 
 /** The mode resets to the palette, the third slider to brightness on each opening. Pipette: press its button and slide onto the picture — the loupe follows, release picks the color */
 @Composable
-private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity, source: PipetteSource, shown: MutableTransitionState<Boolean>) {
+private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity?, source: PipetteSource, shown: MutableTransitionState<Boolean>) {
     var sliders by remember { mutableStateOf(false) }
     val showOpacity = remember { mutableStateOf(false) } // in place of brightness
     var picking by remember { mutableStateOf(false) }
@@ -165,7 +175,7 @@ private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity, source: 
     AnimatedVisibility(shown, Modifier.fillMaxSize().wrapContentSize(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) {
         // Hidden, not removed while picking: leaving composition would cancel the gesture
         Row(Modifier.alpha(if (picking) 0f else 1f).size(PANEL_W, PANEL_H).clip(SmallShape).background(BarBg).consumeTaps().padding(GAP), Arrangement.spacedBy(GAP)) {
-            Box(Modifier.weight(1f)) { if (sliders) Sliders(o, opacity, showOpacity) else Palette(o) }
+            Box(Modifier.weight(1f)) { if (sliders) Sliders(o, opacity, showOpacity) else Palette(o, opacity) }
             Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
                 // Not clickable: its tap detector would consume the down first
                 Box(Modifier.size(CELL).trackBounds(bounds).pointerInput(o, source, host) {
@@ -175,7 +185,7 @@ private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity, source: 
                         at.value = origin + down.position
                         picking = true
                         try {
-                            if (drag(down.id) { at.value = origin + it.position; it.consume() }) source.colorAt(at.value)?.let { o.value = it }
+                            if (drag(down.id) { at.value = origin + it.position; it.consume() }) source.colorAt(at.value)?.let { o.value = it; o.picked = source.canvasAt(at.value) }
                         } finally { picking = false }
                     }
                 }, Alignment.Center) { Icon(AppIcons.Pipette, null, Modifier.size(24.dp), Color.White) }
@@ -191,14 +201,16 @@ private fun ColorSelectionPanel(o: ColorOptions, opacity: ColorOpacity, source: 
 private fun ModeBtn(icon: ImageVector, on: Boolean, onClick: () -> Unit) =
     ToggleBtn(icon, on, Modifier.size(CELL), null, onClick = onClick)
 
-private fun Modifier.colorFill(c: Color) = background(c, SmallShape).border(1.dp, TranslucentGray, SmallShape)
+/** [under] — a checker under a translucent [c] */
+private fun Modifier.colorFill(c: Color, under: Brush? = null) =
+    (if (under != null) background(under, SmallShape) else this).background(c, SmallShape).border(1.dp, TranslucentGray, SmallShape)
 
 @Composable
-private fun Palette(o: ColorOptions) = Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
+private fun Palette(o: ColorOptions, opacity: ColorOpacity?) = Column(verticalArrangement = Arrangement.spacedBy(GAP)) {
     Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
-        val c = o.value
-        val tint = if (c.luminance() > 0.5f) Color.Black else Color.White
-        Row(Modifier.size(WIDE, CELL).colorFill(c).plainClickable(o::save).padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+        val c = o.shown(opacity)
+        val tint = if (c.compositeOver(Color.White).luminance() > 0.5f) Color.Black else Color.White
+        Row(Modifier.size(WIDE, CELL).colorFill(c, rememberCheckerBrush()).plainClickable(o::save).padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Icon(AppIcons.SavePlus, null, Modifier.size(24.dp), tint)
             Icon(AppIcons.Back, null, Modifier.size(24.dp).rotate(180f), tint)
         }
@@ -218,24 +230,25 @@ private class ColorLine(val value: Int, val max: Int, val suffix: String, val gr
 @Composable
 private fun Label(text: Int, color: Color = Color.White) = Text(stringResource(text), LINE, color, fontSize = 14.sp, maxLines = 1)
 
-/** Columns: the sliders start at one x whatever the label lengths. [showOpacity] — the third row is the tool's opacity in place of brightness */
+/** Columns: the sliders start at one x whatever the label lengths. [showOpacity] — the third row is the tool's opacity in place of brightness; no [opacity] — no switch */
 @Composable
-private fun Sliders(o: ColorOptions, opacity: ColorOpacity, showOpacity: MutableState<Boolean>) = Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
+private fun Sliders(o: ColorOptions, opacity: ColorOpacity?, showOpacity: MutableState<Boolean>) = Row(horizontalArrangement = Arrangement.spacedBy(GAP)) {
     var a by showOpacity
     val c = o.value
+    val checker = rememberCheckerBrush()
     Column(Modifier.fillMaxHeight(), Arrangement.SpaceBetween) {
-        Box(Modifier.size(WIDE, CELL).colorFill(c))
-        Row(Modifier.size(WIDE, CELL).background(Color.White, SmallShape).plainClickable { a = !a }.padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+        Box(Modifier.size(WIDE, CELL).colorFill(o.shown(opacity), checker))
+        if (opacity != null) Row(Modifier.size(WIDE, CELL).background(Color.White, SmallShape).plainClickable { a = !a }.padding(horizontal = GAP), Arrangement.SpaceBetween, Alignment.CenterVertically) {
             Icon(if (a) AppIcons.Sun else AppIcons.Opacity, null, Modifier.size(24.dp), Color.Black)
             Icon(AppIcons.ArrowRightLeft, null, Modifier.size(24.dp), Color.Black)
         }
     }
     val pure = Color.hsv(o.hue.value, 1f, 1f)
-    val checker = rememberCheckerBrush()
+    val op = opacity?.takeIf { a }
     val lines = listOf(
         ColorLine(o.hue, "°", HUE_TRACK),
         ColorLine(o.sat, "%", Brush.horizontalGradient(listOf(Color.White, pure))),
-        if (a) ColorLine(opacity.value(), MAX_OPACITY, "%", Brush.horizontalGradient(listOf(c.copy(alpha = 0f), c)), checker, opacity.finish) { opacity.slide(it.toOpacity()) }
+        if (op != null) ColorLine(op.value(), MAX_OPACITY, "%", Brush.horizontalGradient(listOf(c.copy(alpha = 0f), c)), checker, op.finish) { op.slide(it.toOpacity()) }
         else ColorLine(o.bright, "%", Brush.horizontalGradient(listOf(Color.Black, pure)))
     )
     Column(verticalArrangement = Arrangement.spacedBy(GAP)) {

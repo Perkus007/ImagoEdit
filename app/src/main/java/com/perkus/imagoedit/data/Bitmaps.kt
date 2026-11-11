@@ -20,8 +20,8 @@ import kotlin.math.log2
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
-private const val MATCH: Byte = 1 // палочка: похож цветом на исходный
-private const val FILLED: Byte = 2 // палочка: похож и связан с исходным
+internal const val MATCH: Byte = 1 // палочка, смежная замена цвета: похож цветом на исходный
+internal const val FILLED: Byte = 2 // палочка, смежная замена цвета: похож и связан с исходным
 
 private val contentBoxes = Collections.synchronizedMap(WeakHashMap<Bitmap, ContentBox>()) // layer pixels never change in place
 
@@ -208,7 +208,7 @@ fun wandRegion(bmp: Bitmap?, w: Int, h: Int, m: Matrix, mask: LayerMask?, patch:
 }
 
 /** Scanline flood: MATCH px joined to [start] become FILLED */
-private fun ByteArray.flood(cols: Int, start: Int) {
+internal fun ByteArray.flood(cols: Int, start: Int) {
     var stack = IntArray(1024)
     var n = 0
     stack[n++] = start

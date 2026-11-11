@@ -108,7 +108,8 @@ fun LayersPanel(project: Project, bitmaps: List<ImageBitmap?>, masks: (Layer) ->
     val drag = remember(cell, project.layers.size) { LayerDrag(cell, project.layers.size) }
     LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = listState, reverseLayout = true) {
         itemsIndexed(project.layers) { i, layer ->
-            LayerItem(i, layer, bitmaps.getOrNull(i), masks(layer), patches(layer), levels, aspect, project.width, project.height, i == selected, checker, drag, { onSelect(i) }, { onToggleVisible(i) }, onMove)
+            LayerItem(i, layer, bitmaps.getOrNull(i), masks(layer), patches(layer), levels, aspect, project.width, project.height, i == selected, checker, drag, { onSelect(i) },
+                { onToggleVisible(i) }, onMove)
         }
     }
     Bar(arrangement = Arrangement.Center) {

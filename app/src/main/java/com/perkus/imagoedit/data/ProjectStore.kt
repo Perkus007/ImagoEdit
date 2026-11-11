@@ -35,11 +35,12 @@ private fun JSONObject.toLayer() = Layer(optString("file").ifEmpty { null }, opt
     optString("blend").let { n -> Blend.entries.firstOrNull { it.name == n } } ?: Blend.NORMAL, optInt("orient"), optString("mask").ifEmpty { null }, optString("patch").ifEmpty { null },
     optLong("id", newLayerId()))
 
-private fun Project.toJson() = JSONObject().put("name", name).put("w", width).put("h", height).put("updated", updated).put("layers", JSONArray(layers.map { it.toJson() }))
+private fun Project.toJson() = JSONObject().put("name", name).put("w", width).put("h", height).put("updated", updated)
+    .put("layers", JSONArray(layers.map { it.toJson() }))
 
 private fun JSONObject.toProject(id: Long): Project {
-    val layers = optJSONArray("layers")?.let { a -> List(a.length()) { a.getJSONObject(it).toLayer() } }.orEmpty().ifEmpty { listOf(Layer()) }
-    return Project(id, getString("name"), getInt("w"), getInt("h"), optLong("updated", id), layers)
+    val layers = optJSONArray("layers")?.let { a -> List(a.length()) { a.getJSONObject(it).toLayer() } }.orEmpty()
+    return Project(id, getString("name"), getInt("w"), getInt("h"), optLong("updated", id), layers.ifEmpty { listOf(Layer()) })
 }
 
 /** fsync, then an atomic swap: a failure at any moment leaves the previous version intact */
@@ -235,7 +236,7 @@ class ProjectStore {
     fun visibleRegion(l: Layer, mem: Bitmap?, mask: LayerMask?, patch: Tiles?): Region =
         if (mem != null && !mem.hasAlpha() && mask == null && patch == null) l.region() else visibleRegion(mem, l.fileW, l.fileH, l.fileToCanvas(), mask, patch)
 
-    /** [idx] bottom to top; opacity, masks and patches baked in (100%, no mask/patch); hidden layers merge too. Color space of the lowest with pixels.
+    /** [idx] bottom to top; opacity, masks and patches baked in (100%, none of them); hidden layers merge too. Color space of the lowest with pixels.
     [area] — only what it selects, cropped */
     fun mergeLayers(p: Project, idx: List<Int>, mem: List<Bitmap?>, masks: List<LayerMask?>, patches: List<Tiles?>, area: Selection? = null): Pair<Layer, Bitmap?> {
         val parts = idx.filter { p.layers[it].hasImage }

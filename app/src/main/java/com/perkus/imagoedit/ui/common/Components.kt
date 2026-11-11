@@ -1,12 +1,5 @@
 package com.perkus.imagoedit.ui.common
 
-import android.app.Activity
-import android.content.ContentResolver
-import android.content.Context
-import android.content.Intent
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContract
 import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.ScrollState
@@ -67,7 +60,6 @@ import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.node.ModifierNodeElement
 import androidx.compose.ui.node.PointerInputModifierNode
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -205,19 +197,6 @@ class Bounds { var rect = Rect.Zero }
 fun rememberBounds() = remember { Bounds() }
 
 fun Modifier.trackBounds(b: Bounds) = onGloballyPositioned { b.rect = it.boundsInWindow() }
-
-private object PickImage : ActivityResultContract<String, Uri?>() {
-    override fun createIntent(context: Context, input: String): Intent = Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*"), input)
-    override fun parseResult(resultCode: Int, intent: Intent?): Uri? = intent?.data.takeIf { resultCode == Activity.RESULT_OK }
-}
-
-@Composable
-fun rememberImagePicker(onPicked: (ContentResolver, Uri) -> Unit): () -> Unit {
-    val resolver = LocalContext.current.applicationContext.contentResolver
-    val title = stringResource(R.string.choose_app)
-    val launcher = rememberLauncherForActivityResult(PickImage) { uri -> uri?.let { onPicked(resolver, it) } }
-    return remember(launcher, title) { { launcher.launch(title) } }
-}
 
 /** [onChange] while dragging, [onFinished] on release; NumPad ✓ → [onApply]. With a [label] the slider is fixed-width: rows line up */
 @Composable
