@@ -13,6 +13,7 @@ import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -33,6 +34,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +48,7 @@ import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.AppSlider
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.DISABLED_ALPHA
+import com.perkus.imagoedit.ui.common.LABELED_SLIDER_W
 import com.perkus.imagoedit.ui.common.NumField
 import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.consumeTaps
@@ -188,23 +191,28 @@ fun PanelField(value: Float, label: @Composable () -> Unit, suffix: String = "",
         )
     }
 
-/** [label], field (NumPad ✓ → [onApply]) and slider ([onChange], released → [onFinished]) */
+/** [label] ([resettable]: a quick double tap → [onApply] 0), field (NumPad ✓ → [onApply]) and slider ([onChange], released → [onFinished]): the rest of the row,
+LABELED_SLIDER_W in a row sized by its content */
 @Composable
-fun PanelSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, suffix: String = "px", onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit,
-    onApply: (Int) -> Unit) =
+fun PanelSlider(label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, suffix: String = "px", resettable: Boolean = false,
+    onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
     Row(modifier, Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
-        label()
+        Box(Modifier.resetOnDoubleTap(resettable, onApply)) { label() }
         PanelField(value.toFloat(), {}, suffix) { onApply(it.roundToInt()) }
-        AppSlider(value, onChange, range, Modifier.weight(1f).height(32.dp), onFinished = onFinished)
+        AppSlider(value, onChange, range, Modifier.weight(1f).width(LABELED_SLIDER_W).height(32.dp), onFinished = onFinished)
     }
 
-/** On a popover card over a panel: an equal share of the row, the label hugs its text */
+/** On a popover card over a panel: an equal share of the row, the label hugs its text; [resettable] — as PanelSlider's */
 @Composable
-fun RowScope.PopoverSlider(label: AnnotatedString, value: Int, range: IntRange, suffix: String, onFinished: () -> Unit, onChange: (Int) -> Unit, onApply: (Int) -> Unit) =
+fun RowScope.PopoverSlider(label: AnnotatedString, value: Int, range: IntRange, suffix: String, onFinished: () -> Unit, onChange: (Int) -> Unit, resettable: Boolean = false,
+    onApply: (Int) -> Unit) =
     Row(Modifier.weight(1f), Arrangement.spacedBy(8.dp), Alignment.CenterVertically) {
-        Text(label, fontSize = 14.sp, maxLines = 1)
+        Text(label, Modifier.resetOnDoubleTap(resettable, onApply), fontSize = 14.sp, maxLines = 1)
         SliderRow(value, range, suffix, onFinished = onFinished, onChange = onChange) { onApply(it.roundToInt()) }
     }
+
+/** Keyed by the lambda: pointerInput(Unit) would keep the first [onApply] */
+private fun Modifier.resetOnDoubleTap(on: Boolean, onApply: (Int) -> Unit) = if (on) pointerInput(onApply) { detectTapGestures(onDoubleTap = { onApply(0) }) } else this
 
 @Composable
 fun FieldText(text: String, color: Color = Color.White) = Text(text, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)

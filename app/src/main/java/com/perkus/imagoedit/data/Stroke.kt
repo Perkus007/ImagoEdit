@@ -32,13 +32,14 @@ class Clone(val dx: Int, val dy: Int, val heal: Boolean)
 
 /** [layer] — Layer.id; [file] — its pixels at the start; [color] null — erases, unless [clone], [blur], [smudge]. [xy] — dab centers and [r] — file px;
 [area] — the selection at the start. [select] — Selection brush: canvas px, [layer] 0, joined to the selection. [figure] — Fill/Stroke, Transition (erases): covers in place of dabs.
-[blur] > 0 — Blur Area, σ file px; [smudge] — Blur Finger, Smear.keep; [smeared] — its live smudge, if at the bake's raster; [tone], [recolor], [relight] — Correction:
-the layer's own px through it */
+[blur] > 0 — Blur Area, σ file px; [smudge] — Blur Finger, Smear.keep; [smeared] — its live smudge, if at the bake's raster; [filter] — an effect (Effect.kt) or
+Sharpness: the layer's px through it; [recolor], [relight], then [tone] — Correction: the layer's px (filtered) through them */
 class Stroke(val layer: Long, val file: String?, val color: Int?, val xy: FloatArray = FloatArray(0), val r: Float = 0f, val hardness: Float = 1f, val flow: Float = 1f,
     val opacity: Float = 1f, val area: Selection?, val clone: Clone? = null, val select: Region.Op? = null, val figure: Figure? = null,
-    val blur: Float = 0f, val smudge: Float? = null, val smeared: Smeared? = null, val tone: Tone? = null, val recolor: Recolor? = null, val relight: Relight? = null) {
+    val blur: Float = 0f, val smudge: Float? = null, val smeared: Smeared? = null, val tone: Tone? = null, val recolor: Recolor? = null, val relight: Relight? = null,
+    val filter: FilterOn? = null) {
     /** Puts px, not only erases */
-    val paints get() = color != null || clone != null || blur > 0f || smudge != null || tone != null || recolor != null || relight != null
+    val paints get() = color != null || clone != null || blur > 0f || smudge != null || tone != null || recolor != null || relight != null || filter != null
 }
 
 /** Fill/Stroke side; name is persisted */
@@ -94,7 +95,7 @@ fun Stroke.rebased(from: Layer, to: Layer): Stroke {
     val m = from.fileToCanvas().apply { postConcat(to.canvasToFile()) }
     val p = xy.copyOf().also { m.mapPoints(it) }
     val c = clone?.let { cl -> floatArrayOf(cl.dx.toFloat(), cl.dy.toFloat()).let { v -> m.mapVectors(v); Clone(v[0].roundToInt(), v[1].roundToInt(), cl.heal) } }
-    return Stroke(layer, to.file, color, p, r, hardness, flow, opacity, area, c, select, figure, blur, smudge, tone = tone, recolor = recolor, relight = relight)
+    return Stroke(layer, to.file, color, p, r, hardness, flow, opacity, area, c, select, figure, blur, smudge, tone = tone, recolor = recolor, relight = relight, filter = filter)
 }
 
 private const val TIP_LUT = 1024 // ступени профиля по квадрату расстояния до центра даба
@@ -140,8 +141,8 @@ class Dab(val hardness: Float, val flow: Float) {
 }
 
 /** Tile by tile: dabs (Dab: visits) or the figure into a draft (× soft selection edge), the draft onto the tile with [opacity]: the draft builds up to it, never past.
-Clone — the layer's own px through the draft; healing — toward the healed px (Heal.kt); blur — lerp toward the blurred or smudged layer (smudge coverage is hard), tone,
-recolor, relight — toward the layer through it (recolor, relight without tone: only tiles with px they change).
+Clone — the layer's own px through the draft; healing — toward the healed px (Heal.kt); blur, filter — lerp toward the blurred, smudged (its coverage is hard) or filtered layer,
+recolor, relight, tone — toward the layer (filtered) through them (recolor, relight alone: only tiles with px they change).
 Painting, cloning, blurring → patch (a new tile starts as base × mask, the mask tile becomes cutOut); erasing → patch where it has a tile, else mask.
 null — nothing reaches the layer; else the new mask and patch */
 fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId: String, patchId: String): Pair<LayerMask?, Tiles?>? {
@@ -263,7 +264,7 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
         Smear(ceil(w * ks).toInt(), ceil(h * ks).toInt(), r * ks, hardness, keeps, base, ks < 1f) { into, x, y -> sc.composite(into, x, y, base, w, h, mask, patch, sp, ks) }
             .also { s -> for (i in 0 until xy.size / 2) s.dab(xy[2 * i] * ks, xy[2 * i + 1] * ks) }
     }
-    val blurred = if (blur > 0f) Blurred(w, h, blur, BLUR_EXACT) else null
+    val filtered = if (blur > 0f) Blurred(w, h, blur, BLUR_EXACT) else filter?.invoke(w, h, toFile)
 
     return try {
         val first = worker(0)
@@ -280,7 +281,7 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
         val rendered = { wk: Int, x: Int, y: Int -> worker(wk).run { under().also { render(it, x, y) } } }
         val joined = recolor?.joined(area.fileRect(l), toFile, rendered)
         val around = relight?.takeIf { it.local }?.let { surroundings(area.fileRect(l), rendered) }
-        if (tone == null && (recolor != null || relight != null)) {
+        if (tone == null && filtered == null && (recolor != null || relight != null)) {
             val at = touched.indices.filter { touched[it] }
             parallel(at.size) { wk, i ->
                 val k = at[i]
@@ -317,14 +318,13 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
             }, x0, y0, w, h) {
                 when {
                     heal != null -> Unit
-                    from != null || blurred != null || smear != null || tone != null || recolor != null || relight != null -> {
+                    from != null || filtered != null || smear != null || tone != null || recolor != null || relight != null -> {
                         val under = v.under()
                         when {
                             from != null -> v.render(under, x0 + from.dx, y0 + from.dy)
                             smear != null -> { v.render(under, x0, y0); smear.into(under, x0, y0, ks, v.raw) }
-                            blurred != null -> blurred.into(under, x0, y0, v::render)
                             else -> {
-                                v.render(under, x0, y0)
+                                if (filtered != null) filtered.into(under, x0, y0, v::render) else v.render(under, x0, y0)
                                 recolor?.swap(under, under, joined?.let { j -> v.joinedHere.also { j.at(x0, y0, it) } })
                                 relight?.adjust(under, under, x0, y0, 1, around)
                             }

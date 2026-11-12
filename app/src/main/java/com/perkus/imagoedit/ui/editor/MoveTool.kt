@@ -6,6 +6,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.nativeCanvas
@@ -64,6 +65,30 @@ abstract class PlaceState<S>(val id: Long, cw: Int, ch: Int, initial: ContentTra
 
     /** Nothing to frame yet: no handles, a drag only moves */
     open val empty: Boolean get() = false
+
+    /** The frame's sides at the original size; null — no double tap fit */
+    protected open val original: Size? get() = null
+
+    private var fitted: ContentTransform? = null // the last fit: rounding makes a refit of it unstable, so it's compared as is
+
+    /** [w]×[h] centered, the bounds' left/top on whole px (as center snapping) */
+    private fun centered(w: Float, h: Float): ContentTransform {
+        val b = t.copy(cx = 0f, cy = 0f, w = w, h = h).bounds()
+        return t.copy(cx = (cw / 2f + b.left).roundToInt() - b.left, cy = (ch / 2f + b.top).roundToInt() - b.top, w = w, h = h)
+    }
+
+    /** The bounds fit into the canvas, sides on whole px; on the last fit — the original size. Both centered, angle and flips kept */
+    override fun doubleTap() {
+        val o = original
+        if (o == null || empty) return
+        hold {
+            t = if (t == fitted) centered(o.width, o.height) else {
+                val b = t.bounds()
+                val k = minOf(cw / b.width(), ch / b.height())
+                centered((t.w * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE), (t.h * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE)).also { fitted = it }
+            }
+        }
+    }
 
     override fun hit(p: Offset, scale: Float, d: Density): Int {
         if (precise || empty) return MOVE
@@ -136,22 +161,7 @@ class MoveState(val layer: Int, id: Long, cw: Int, ch: Int, private val initial:
     PlaceState<Pair<ContentTransform, Int>>(id, cw, ch, initial, initialOpacity) {
     val changed get() = t != initial || opacity != initialOpacity
 
-    private var fitted: ContentTransform? = null // the last fit: rounding makes a refit of it unstable, so it's compared as is
-
-    /** [w]×[h] centered, the bounds' left/top on whole px (as center snapping) */
-    private fun centered(w: Float, h: Float): ContentTransform {
-        val b = t.copy(cx = 0f, cy = 0f, w = w, h = h).bounds()
-        return t.copy(cx = (cw / 2f + b.left).roundToInt() - b.left, cy = (ch / 2f + b.top).roundToInt() - b.top, w = w, h = h)
-    }
-
-    /** The bounds fit into the canvas, sides on whole px; on the last fit — the original size. Both centered, angle and flips kept */
-    override fun doubleTap() = hold {
-        t = if (t == fitted) centered(initial.w, initial.h) else {
-            val b = t.bounds()
-            val k = minOf(cw / b.width(), ch / b.height())
-            centered((t.w * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE), (t.h * k).roundToInt().toFloat().coerceAtLeast(MIN_SIZE)).also { fitted = it }
-        }
-    }
+    override val original get() = Size(initial.w, initial.h)
 
     override var step: Pair<ContentTransform, Int>
         get() = t to opacity

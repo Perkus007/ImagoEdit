@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toOffset
 import com.perkus.imagoedit.data.Blend
+import com.perkus.imagoedit.data.LayerOverlay
 import com.perkus.imagoedit.data.Selection
 import com.perkus.imagoedit.data.TILE
 import com.perkus.imagoedit.data.alphaAt
@@ -135,9 +136,9 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
         }
     }
 
-    /** A PlaceState [tool]'s layer drawn with its transform (a text by the tool itself), a TransitionTool's or [correction]'s with its preview unless live strokes are on it;
-    [fill]'s gets its preview */
-    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: CanvasTool<*>? = null, detail: Float = 1f, fill: FillTool? = null, correction: CorrectionTool? = null) {
+    /** A PlaceState [tool]'s layer drawn with its transform (a text by the tool itself), a TransitionTool's or [overlay]'s (corrections, an effect) with its preview unless
+    live strokes are on it; [fill]'s gets its preview */
+    fun DrawScope.drawLayers(offset: Offset, scale: Float, range: IntRange, tool: CanvasTool<*>? = null, detail: Float = 1f, fill: FillTool? = null, overlay: LayerOverlay? = null) {
         val lv = levels.value
         val shown = layers.value
         val place = tool as? PlaceState<*>
@@ -151,7 +152,7 @@ class CanvasPicture(private val size: State<IntSize>, private val layers: State<
                 val blend = preview.blend(l.id, l.blend).mode
                 if (active is TextState) with(active) { drawLive(scale, canvasW, canvasH) }
                 else drawPlaced(d.img, l.fileW, l.fileH, active?.t ?: l.inPlace, scale, canvasW, canvasH, d.img?.let { lv[it.asAndroidBitmap()] }, alpha, l.orient, d.mask, d.patch,
-                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer } ?: correction?.takeIf { l.id == it.layer && it.shows }, l, detail, blend)
+                    strokes.takeIf { it.has(l.id) } ?: transition?.takeIf { l.id == it.layer } ?: overlay?.takeIf { l.id == it.layer && it.shows }, l, detail, blend)
                 if (fill != null && l.id == fill.layer) with(fill) { drawPreview(alpha, blend, scale, canvasW, canvasH) }
             }
         }
@@ -217,10 +218,10 @@ interface SelectionPreview {
 }
 
 /** [tool] — Move, Text, Crop, Selection transform or Transition while open; [select], [brush] — the active tool's gesture (both for the Selection brush); [selection] — drawn always,
-as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open; [correction] — the carousel's corrections while open;
-[onTap] — a one-finger touch that didn't move */
+as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open; [overlay] — the carousel's corrections or the open
+effect; [onTap] — a one-finger touch that didn't move */
 @Composable
-fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, correction: CorrectionTool?,
+fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, overlay: LayerOverlay?,
     onTap: (() -> Unit)?, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val margin = with(density) { 24.dp.toPx() }
@@ -306,7 +307,7 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
                     if (part != Part.Hot) compositingStrategy = if (vp.zoomPct == 0 && picture.range(part, hot).let { !it.isEmpty() && (part == Part.Below || !picture.blends(it)) })
                         CompositingStrategy.Offscreen else CompositingStrategy.Auto
                 }
-                .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill, correction) } })
+                .drawBehind { with(picture) { drawLayers(vp.offset, vp.scale, range(part, hot), tool, if (vp.zoomPct > 0) ZOOM_DETAIL else REST_DETAIL, fill, overlay) } })
         }
         // Offscreen: the cut-out stays in it
         if (preview != null) Spacer(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }.drawBehind {

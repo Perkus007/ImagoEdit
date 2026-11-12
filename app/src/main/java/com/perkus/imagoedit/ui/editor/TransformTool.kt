@@ -209,7 +209,7 @@ fun TransformOverlay(s: TransformState, onCancel: () -> Unit, onConfirm: () -> U
     val shown = remember { MutableTransitionState(false).apply { targetState = true } }
     AnimatedVisibility(shown, Modifier.align(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) {
         FramePanel(s, Modifier, extra = { PlaceButtons(s) }, extraFields = { AngleField(s) }, fieldsGap = 16.dp, more = {
-            EdgeSlider(s, { FieldText(stringResource(R.string.expand)) }, s.edge.grow, MIN_GROW..MAX_GROW, Modifier.width(ROW_W)) { copy(grow = it) }
+            EdgeSlider(s, { FieldText(stringResource(R.string.expand)) }, s.edge.grow, MIN_GROW..MAX_GROW, Modifier.width(ROW_W), resettable = true) { copy(grow = it) }
         }, unfolded = {
             Row(Modifier.width(ROW_W), Arrangement.spacedBy(16.dp)) {
                 EdgeSlider(s, { FieldIcon(AppIcons.Opacity, Modifier.rotate(180f)) }, s.edge.blur, 0..MAX_FEATHER, Modifier.weight(1f)) { copy(blur = it) }
@@ -221,5 +221,5 @@ fun TransformOverlay(s: TransformState, onCancel: () -> Unit, onConfirm: () -> U
 
 /** One edge value: [label], field and slider; [set] — the edge with it */
 @Composable
-private fun EdgeSlider(s: TransformState, label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, set: Edge.(Int) -> Edge) =
-    PanelSlider(label, value, range, modifier, onFinished = s::finish, onChange = { s.slideEdge(s.edge.set(it)) }) { s.edgeTo(s.edge.set(it)) }
+private fun EdgeSlider(s: TransformState, label: @Composable () -> Unit, value: Int, range: IntRange, modifier: Modifier, resettable: Boolean = false, set: Edge.(Int) -> Edge) =
+    PanelSlider(label, value, range, modifier, resettable = resettable, onFinished = s::finish, onChange = { s.slideEdge(s.edge.set(it)) }) { s.edgeTo(s.edge.set(it)) }

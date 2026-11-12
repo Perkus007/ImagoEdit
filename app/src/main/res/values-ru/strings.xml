@@ -128,11 +128,15 @@
     <string name="fonts_user_hint">Поместите файлы шрифтов «.ttf», «.otf» или «.ttc» в папку «.imagoedit/.fonts». Поддерживаются как обычные так и вариативные шрифты.</string>
     <string name="correction_invert">Инверсия</string>
     <string name="correction_black_white">Чёрно-белый</string>
+    <string name="correction_invert_black_white">Инверсия и чёрно-белый</string>
     <string name="correction_contrast">Контрастность</string>
+    <string name="correction_brightness_contrast">Яркость и контрастность</string>
     <string name="correction_temperature">Температура</string>
     <string name="correction_replace_color">Заменить цвет</string>
-    <string name="correction_shadows_highlights">Тени/Свет</string>
+    <string name="correction_shadows_highlights">Тени и свет</string>
     <string name="correction_color_balance">Цветовой баланс</string>
+    <string name="correction_sharpness">Резкость</string>
+    <string name="correction_shade">Оттенок</string>
     <string name="correction_sample">Пример:</string>
     <string name="correction_replace_with">Заменить на:</string>
     <string name="correction_highlights">Подсветка</string>
@@ -142,4 +146,10 @@
     <string name="color_red">Красный</string>
     <string name="color_green">Зелёный</string>
     <string name="color_blue">Синий</string>
+    <string name="effect_gaussian_blur">Размытие по Гауссу</string>
+    <string name="effect_motion_blur">Направленное размытие</string>
+    <string name="effect_shadow">Тень</string>
+    <string name="effect_glow">Свечение</string>
+    <string name="angle">Угол</string>
+    <string name="offset">Смещение</string>
 </resources>

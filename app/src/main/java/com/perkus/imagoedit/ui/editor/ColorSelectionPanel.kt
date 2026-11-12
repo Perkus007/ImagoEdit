@@ -113,12 +113,13 @@ interface PipetteSource {
     fun canvasAt(p: Offset): Offset
 }
 
-/** HSV: hue and saturation survive gray and black, the sliders don't jump. [saved] — newest first */
+/** HSV: hue and saturation survive gray and black, the sliders don't jump. [saved] — newest first; [default] — ARGB */
 @Stable
-class ColorOptions(private val settings: AppSettings, private val key: String) {
-    val hue = FloatOption(settings, "$key.hue", 0f..360f, 0f)
-    val sat = FloatOption(settings, "$key.sat", 0f..100f, 100f)
-    val bright = FloatOption(settings, "$key.bright", 0f..100f, 100f)
+class ColorOptions(private val settings: AppSettings, private val key: String, default: Int = android.graphics.Color.RED) {
+    private val start = FloatArray(3).also { android.graphics.Color.colorToHSV(default, it) }
+    val hue = FloatOption(settings, "$key.hue", 0f..360f, start[0])
+    val sat = FloatOption(settings, "$key.sat", 0f..100f, start[1] * 100f)
+    val bright = FloatOption(settings, "$key.bright", 0f..100f, start[2] * 100f)
     var saved by mutableStateOf(loadSaved())
         private set
 

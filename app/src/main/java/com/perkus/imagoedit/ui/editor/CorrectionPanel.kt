@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -29,15 +30,17 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.MutableIntState
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -56,9 +59,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.imageResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -68,18 +74,19 @@ import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
 import com.perkus.imagoedit.data.Base
 import com.perkus.imagoedit.data.BoolOption
+import com.perkus.imagoedit.data.CarouselItem
 import com.perkus.imagoedit.data.Correction
-import com.perkus.imagoedit.data.Feather
 import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.data.Figure
+import com.perkus.imagoedit.data.Filter
 import com.perkus.imagoedit.data.Guide
 import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.data.Joined
 import com.perkus.imagoedit.data.Layer
+import com.perkus.imagoedit.data.LayerOverlay
 import com.perkus.imagoedit.data.LayerMask
 import com.perkus.imagoedit.data.MAX_OPACITY
 import com.perkus.imagoedit.data.MAX_PCT
-import com.perkus.imagoedit.data.MaskOverlay
 import com.perkus.imagoedit.data.MaskPaints
 import com.perkus.imagoedit.data.Recolor
 import com.perkus.imagoedit.data.PERCENT
@@ -87,10 +94,10 @@ import com.perkus.imagoedit.data.Relight
 import com.perkus.imagoedit.data.SIGNED
 import com.perkus.imagoedit.data.SAMPLES
 import com.perkus.imagoedit.data.Selection
+import com.perkus.imagoedit.data.Sharpen
 import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.TILE
 import com.perkus.imagoedit.data.Tiles
-import com.perkus.imagoedit.data.Tone
 import com.perkus.imagoedit.data.WORKERS
 import com.perkus.imagoedit.data.asPath
 import com.perkus.imagoedit.data.built
@@ -104,13 +111,12 @@ import com.perkus.imagoedit.data.fileToCanvas
 import com.perkus.imagoedit.data.fileRect
 import com.perkus.imagoedit.data.fileW
 import com.perkus.imagoedit.data.hasImage
-import com.perkus.imagoedit.data.keepPaint
 import com.perkus.imagoedit.data.levelCount
 import com.perkus.imagoedit.data.levelFor
 import com.perkus.imagoedit.data.mark
 import com.perkus.imagoedit.data.parallel
 import com.perkus.imagoedit.data.patchTile
-import com.perkus.imagoedit.data.saveClipLayer
+import com.perkus.imagoedit.data.replaceSelected
 import com.perkus.imagoedit.data.tilePaint
 import com.perkus.imagoedit.data.tilesAlong
 import com.perkus.imagoedit.data.toneOf
@@ -137,17 +143,18 @@ private val CAROUSEL_H = 128.dp
 private val GAP = 8.dp
 private val TILE_W = 136.dp
 private val IMAGE_H = 84.dp // картинка плитки: 408×252 px в drawable-xxhdpi
+private val LABEL_H = CAROUSEL_H - GAP * 2 - IMAGE_H // подпись в одну строку: картинка видна целиком
+private val LABEL_PAD = 4.dp
 private val BTN = 32.dp // = ToolBtn
-private val PANEL_W = 480.dp
 private val PAGE_ANIM = tween<IntOffset>(PANEL_ANIM_DURATION_MS)
-private val TONES = listOf(R.string.correction_highlights, R.string.correction_shadows, R.string.correction_whites, R.string.correction_blacks) // по 2 на страницу
-private val CHANNELS = listOf(R.string.color_red, R.string.color_green, R.string.color_blue)
 private val REPLACE = listOf(R.string.intensity, R.string.tolerance)
+private const val SHADE_COLOR = 0xFFFF9900.toInt()
 
-/** Replace color's settings, persisted at once; [contiguous] — for the session: it needs the pipette's points. [samples] count only where [used] (null — always:
-the first; the rest off by default) */
+/** Replace color's settings and Shade's [shade] color, persisted at once; [contiguous] — for the session: it needs the pipette's points. [samples] count only
+where [used] (null — always: the first; the rest off by default) */
 @Stable
 class CorrectionOptions(settings: AppSettings) {
+    val shade = ColorOptions(settings, "shade.color", SHADE_COLOR)
     val samples = List(SAMPLES) { ColorOptions(settings, "replace.from$it") }
     val used = List(SAMPLES) { if (it == 0) null else BoolOption(settings, "replace.used$it", false) }
     val to = ColorOptions(settings, "replace.to")
@@ -167,15 +174,15 @@ class CorrectionOptions(settings: AppSettings) {
 }
 
 /** File px [rect] at 2ⁿ× fewer px a side */
-private data class Spot(val rect: Rect, val n: Int)
+internal data class Spot(val rect: Rect, val n: Int)
 
-/** A computed preview of the layer's px [at]: [px] — the layer's raster at at's level, only tiles about at's rect; its smaller copies or none */
-private class Grid(val at: Spot, val px: Tiles) {
+/** A computed preview of the layer's px [at]: [px] — a raster at at's level from file px ([x0], [y0]) (the layer's: only tiles about at's rect); its smaller copies or none */
+internal class Grid(val at: Spot, val px: Tiles, private val x0: Float = 0f, private val y0: Float = 0f) {
     /** In file px, from the copy for [k] px per file px, as the layer's; coarser than the layer's own px — always filtered */
     fun draw(c: Canvas, p: Paint, filter: Boolean, r: RectF, k: Float) {
         val j = (levelFor(k) - at.n).coerceIn(0, px.levels.lastIndex)
         p.isFilterBitmap = filter || at.n + j > 0
-        c.drawTiles(px.levels[j], px.cols(j), (1 shl (at.n + j)).toFloat(), p, r)
+        c.drawTiles(px.levels[j], px.cols(j), (1 shl (at.n + j)).toFloat(), p, r, x0 = x0, y0 = y0)
     }
 
     fun recycle() = px.recycle()
@@ -188,7 +195,7 @@ private class Previews {
 }
 
 /** These TILE² px (RGBA bytes) averaged 2ⁿ×2ⁿ, as the layer's smaller copies, into [out] (as large) from its px ([ox], [oy]) */
-private fun ByteArray.shrinkInto(n: Int, out: ByteArray, ox: Int, oy: Int) {
+internal fun ByteArray.shrinkInto(n: Int, out: ByteArray, ox: Int, oy: Int) {
     if (n == 0) { copyInto(out); return }
     val m = 1 shl n
     val half = m * m / 2
@@ -207,11 +214,15 @@ private fun ByteArray.shrinkInto(n: Int, out: ByteArray, ox: Int, oy: Int) {
 }
 
 /** The carousel's corrections of layer [l] within [sel] (null — all of it), previewed together in the layer (MaskOverlay), baked as one brush stroke as it closes:
-Shadows/Highlights on the layer's px, then the one-slider ones in Correction's order, Color balance last. Replace color — alone, on the layer as it is: the rest are
-hidden while its panel is open. Replace color, Shadows/Highlights preview off the main thread from the layer's px [src], [srcMask], [srcPatch] */
+Sharpness on the layer's px, then Shadows/Highlights, the color-matrix ones in Correction's order, Shade last; [o] — Shade's color. [replaces] — the tool of
+Replace color by o instead, alone on the layer as it is. Replace color, Sharpness, Shadows/Highlights preview off the main thread from the layer's px [src],
+[srcMask], [srcPatch] */
 @Stable
-class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bitmap?, private val srcMask: LayerMask?, private val srcPatch: Tiles?) : MaskOverlay {
-    val layer = l.id
+class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bitmap?, private val srcMask: LayerMask?, private val srcPatch: Tiles?,
+    o: CorrectionOptions, replaces: Boolean = false) : LayerOverlay {
+    override val layer = l.id
+    private val replace = o.takeIf { replaces }
+    val shade = o.shade
     private val file = l.file
     private val bakes = l.hasImage
     private val fw = l.fileW
@@ -223,18 +234,14 @@ class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bit
     /** The panel shown; null — the carousel */
     var open by mutableStateOf<Correction?>(null)
 
-    /** The one-slider ones' by Correction.ordinal; [tones] — Shadows/Highlights' by TONES; [balance] — Color balance's by CHANNELS */
-    val values = List(Correction.entries.size) { 0 }.toMutableStateList()
-    val tones = List(TONES.size) { 0 }.toMutableStateList()
-    val balance = List(CHANNELS.size) { 0 }.toMutableStateList()
-
-    private val replacing get() = open == Correction.ReplaceColor
+    /** Each correction's sliders' by Correction.ordinal */
+    val values = Correction.entries.map { List(it.sliders.size) { 0 }.toMutableStateList() }
+    private val tones = values[Correction.ShadowsHighlights.ordinal]
 
     private val area = sel.fileRect(l)
     private val all = Spot(area, maxOf(0, ceil(log2(area.width().toFloat() * area.height() / PREVIEW_PX) / 2).toInt())) // coarse's
 
-    private val recoloring = Previews()
-    private val relighting = Previews()
+    private val computed = Previews()
     private val view = MutableStateFlow<Spot?>(null) // what fine is to cover: set in the draw phase
 
     /** A worker's scratch in preview's work (see parallel) */
@@ -246,109 +253,116 @@ class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bit
         val out = ByteArray(4 * TILE * TILE)
         val only by lazy(LazyThreadSafetyMode.NONE) { ByteArray(TILE * TILE) }
 
-        /** The layer's px from file px ([x], [y]) at full size, as the bake reads them */
-        fun read(x: Int, y: Int) = px.also { c.composite(it, x, y, src, fw, fh, srcMask, srcPatch, mp) }
+        /** The layer's px from file px ([x], [y]) into [into] at full size, as the bake renders them */
+        fun render(into: Bitmap, x: Int, y: Int) = c.composite(into, x, y, src, fw, fh, srcMask, srcPatch, mp)
+
+        /** The layer's px from file px ([x], [y]) at full size through [f] (null — as they are), as the bake reads them */
+        fun read(x: Int, y: Int, f: Filter? = null) = px.also { if (f == null) render(it, x, y) else f.into(it, x, y, ::render) }
     }
 
     private val readers = arrayOfNulls<Reader>(WORKERS)
 
     private fun reader(wk: Int) = readers[wk] ?: Reader().also { readers[wk] = it }
 
-    private val tone by derivedStateOf { toneOf(values, balance) }
+    private val tone by derivedStateOf { toneOf(values, shade.value.toArgb()) }
 
     private fun relight() = tones.map { it / MAX_PCT.toFloat() }.let { (h, s, l, d) -> Relight(h, s, l, d) }
 
-    /** Read in the draw phase */
-    val shows get() = bakes && (if (replacing) recoloring.coarse != null else relighting.coarse != null || tone != null)
+    /** null — none */
+    private fun sharpen() = values[Correction.Sharpness.ordinal][0].takeIf { it > 0 }?.let { Sharpen(it / MAX_PCT.toFloat()) }
 
-    /** Replace color's while its panel is open, else the rest; null — nothing to change */
-    fun stroke(o: CorrectionOptions): Stroke? {
-        val r = if (replacing) o.recolor().takeUnless { it.idle } else null
-        val h = if (replacing) null else relight().takeUnless { it.idle }
-        val t = if (replacing) null else tone
-        return if (bakes && (r != null || h != null || t != null)) Stroke(layer, file, null, area = sel, figure = Figure(rect.asPath()), tone = t, recolor = r, relight = h)
+    override val shows get() = bakes && (computed.coarse != null || tone != null)
+
+    /** Replace color's or the carousel's; null — nothing to change */
+    fun stroke(): Stroke? {
+        val r = replace?.recolor()?.takeUnless { it.idle }
+        val h = relight().takeUnless { it.idle }
+        val f = sharpen()
+        val t = tone
+        return if (bakes && (r != null || h != null || f != null || t != null))
+            Stroke(layer, file, null, area = sel, figure = Figure(rect.asPath()), tone = t, recolor = r, relight = h, filter = f?.on)
         else null
     }
 
-    /** While running: Replace color's preview while its panel is open, else Shadows/Highlights' while its panel is open or it changes anything; one ends before the
-    next starts. For the latest settings — of the whole area at ≤ PREVIEW_PX with smaller copies and, when the layer is drawn sharper, of the part in view */
-    suspend fun preview(o: CorrectionOptions) {
+    /** While running, for the latest settings — of the whole area at ≤ PREVIEW_PX with smaller copies and, when the layer is drawn sharper, of the part in view:
+    Replace color's, or Sharpness and Shadows/Highlights while they change anything (Shadows/Highlights' surroundings — while its panel is open or it changes
+    anything); one ends before the next starts, the last one shown till then */
+    suspend fun preview() {
         if (!bakes || area.isEmpty) return
-        snapshotFlow { if (replacing) Correction.ReplaceColor else Correction.ShadowsHighlights.takeIf { open == it || tones.any { t -> t != 0 } } }.collectLatest { k ->
-            view.value = null
-            try {
-                when (k) {
-                    Correction.ReplaceColor -> {
-                        var made: Recolor? = null // the previews' settings
-                        var joinedFor: Recolor? = null // the settings Contiguous's px are for: only the samples, threshold and seeds count
-                        var joined: Joined? = null
-                        // Smaller px recolored would lose small replaced spots: recolored at full size, as the bake
-                        shown(recoloring, { o.recolor() }, Recolor::idle) { r, v, c0, f0 ->
-                            val key = r.copy(to = 0, opacity = 0f, amount = 0f)
-                            if (key != joinedFor) { joined = r.joined(area, toFile) { wk, x, y -> reader(wk).read(x, y) }; joinedFor = key }
-                            val j = joined
-                            fun swapped(at: Spot, copies: Boolean) =
-                                grid(at, sampled(at, copies) { wk, px, x, y -> r.swap(px, only = j?.let { o -> reader(wk).only.also { o.at(x, y, it) } }) }, copies)
-                            val redo = r != made || c0 == null
-                            ((if (redo) swapped(all, true) else c0) to (if (!redo && f0?.at == v) f0 else v?.let { swapped(it, false) })).also { made = r }
-                        }
-                    }
-                    Correction.ShadowsHighlights -> {
-                        var whole: Grid? = null // the area's px as they are, as coarse's
-                        var part: Grid? = null // the part in view's, as fine's
-                        try {
-                            // At once, before a slider moves: the layer's px and their surroundings take the longest. The surroundings — of the full-size px, as the
-                            // bake's; smooth in px, so relit at the preview's own px: a slider moved doesn't read the layer again
-                            val base = withContext(Dispatchers.Default) {
-                                val g = Guide(area)
-                                whole = grid(all, sampled(all, true) { wk, px, x, y -> g.add(wk, px, x, y) }, false)
-                                g.base()
-                            }
-                            var made: Relight? = null // the previews' settings
-                            shown(relighting, { relight() }, Relight::idle) { r, v, c0, f0 ->
-                                if (part?.at != v) { part?.recycle(); part = v?.let { grid(it, sampled(it, false) { _, _, _, _ -> }, false) } }
-                                val redo = r != made || c0 == null
-                                ((if (redo) whole?.let { relit(it, r, base, true) } else c0) to (if (!redo && f0?.at == v) f0 else part?.let { relit(it, r, base, false) }))
-                                    .also { made = r }
-                            }
-                        } finally {
-                            whole?.recycle()
-                            part?.recycle()
-                        }
-                    }
-                    else -> {}
-                }
-            } finally {
-                readers.forEach { it?.px?.recycle() }
-                readers.fill(null)
-            }
-        }
-    }
-
-    /** Shows in [p] the previews [make] gives, off the main thread, for the latest settings [of] (none while [idle]) and part in view, from the previews shown */
-    private suspend fun <T> shown(p: Previews, of: () -> T, idle: (T) -> Boolean, make: (settings: T, view: Spot?, coarse: Grid?, fine: Grid?) -> Pair<Grid?, Grid?>) {
         try {
-            combine(snapshotFlow(of), view, ::Pair).conflate().collect { (r, v) ->
-                val c0 = p.coarse
-                val f0 = p.fine
-                val (c, f) = if (idle(r)) null to null else withContext(Dispatchers.Default) { make(r, v, c0, f0) }
-                p.coarse = c
-                p.fine = f
-                if (c0 !== c) c0?.recycle()
-                if (f0 !== f) f0?.recycle()
+            val o = replace
+            if (o != null) {
+                var made: Recolor? = null // the previews' settings
+                var joinedFor: Recolor? = null // the settings Contiguous's px are for: only the samples, threshold and seeds count
+                var joined: Joined? = null
+                // Smaller px recolored would lose small replaced spots: recolored at full size, as the bake
+                shown({ o.recolor() }, Recolor::idle) { r, v, c0, f0 ->
+                    val key = r.copy(to = 0, opacity = 0f, amount = 0f)
+                    if (key != joinedFor) { joined = r.joined(area, toFile) { wk, x, y -> reader(wk).read(x, y) }; joinedFor = key }
+                    val j = joined
+                    fun swapped(at: Spot, copies: Boolean) =
+                        grid(at, sampled(at, copies) { wk, px, x, y -> r.swap(px, only = j?.let { m -> reader(wk).only.also { m.at(x, y, it) } }) }, copies)
+                    val redo = r != made || c0 == null
+                    ((if (redo) swapped(all, true) else c0) to (if (!redo && f0?.at == v) f0 else v?.let { swapped(it, false) })).also { made = r }
+                }
+            } else snapshotFlow { open == Correction.ShadowsHighlights || tones.any { it != 0 } }.collectLatest { lit ->
+                var base: Base? = null
+                var whole: Grid? = null // the area's px before relighting, as coarse's: as they are or sharpened by wholeFor
+                var part: Grid? = null // the part in view's, as fine's
+                try {
+                    // At once, before a slider moves: the layer's px and their surroundings take the longest. The surroundings — of the full-size px, as the
+                    // bake's; smooth in px, so relit at the preview's own px: a slider moved doesn't read the layer again
+                    if (lit) base = withContext(Dispatchers.Default) {
+                        val g = Guide(area)
+                        whole = grid(all, sampled(all, true) { wk, px, x, y -> g.add(wk, px, x, y) }, false)
+                        g.base()
+                    }
+                    var wholeFor: Sharpen? = null
+                    var partFor: Sharpen? = null
+                    var made: Pair<Sharpen?, Relight>? = null // the previews' settings
+                    shown({ sharpen() to relight() }, { (s, r) -> s == null && r.idle }) { (s, r), v, c0, f0 ->
+                        val redo = (s to r) != made || c0 == null
+                        (if (r.idle) {
+                            (if (redo) grid(all, sampled(all, true, s), true) else c0) to (if (!redo && f0?.at == v) f0 else v?.let { grid(it, sampled(it, false, s), false) })
+                        } else {
+                            if (wholeFor != s) { whole?.recycle(); whole = grid(all, sampled(all, true, s), false); wholeFor = s }
+                            if (part?.at != v || partFor != s) { part?.recycle(); part = v?.let { grid(it, sampled(it, false, s), false) }; partFor = s }
+                            (if (redo) whole?.let { relit(it, r, base, true) } else c0) to (if (!redo && f0?.at == v) f0 else part?.let { relit(it, r, base, false) })
+                        }).also { made = s to r }
+                    }
+                } finally {
+                    whole?.recycle()
+                    part?.recycle()
+                }
             }
         } finally {
-            val shown = listOfNotNull(p.coarse, p.fine)
-            p.coarse = null
-            p.fine = null
+            val shown = listOfNotNull(computed.coarse, computed.fine)
+            computed.coarse = null
+            computed.fine = null
             shown.forEach { it.recycle() }
+            readers.forEach { it?.px?.recycle() }
+            readers.fill(null)
         }
     }
 
-    /** The layer's px about [v] at full size, each tile through [full] (its px from file px x, y; [worker]'s), then averaged as the layer's smaller copies, into new
-    tiles at v's level: the old may still be on screen. Past the layer its edge px repeat, as a clamped texture's. [around] — tiles so far around that smaller
-    copies of them, drawn filtered, average only real px about v's rect. Off the main thread */
-    private fun sampled(v: Spot, around: Boolean, full: (worker: Int, px: Bitmap, x: Int, y: Int) -> Unit): Array<Bitmap?> {
+    /** Shows the previews [make] gives, off the main thread, for the latest settings [of] (none while [idle]) and part in view, from the previews shown */
+    private suspend fun <T> shown(of: () -> T, idle: (T) -> Boolean, make: (settings: T, view: Spot?, coarse: Grid?, fine: Grid?) -> Pair<Grid?, Grid?>) {
+        combine(snapshotFlow(of), view, ::Pair).conflate().collect { (r, v) ->
+            val c0 = computed.coarse
+            val f0 = computed.fine
+            val (c, f) = if (idle(r)) null to null else withContext(Dispatchers.Default) { make(r, v, c0, f0) }
+            computed.coarse = c
+            computed.fine = f
+            if (c0 !== c) c0?.recycle()
+            if (f0 !== f) f0?.recycle()
+        }
+    }
+
+    /** The layer's px about [v] at full size through [f] (null — as they are: smaller px would lose its detail), each tile then through [full] (its px from file
+    px x, y; [worker]'s), then averaged as the layer's smaller copies, into new tiles at v's level: the old may still be on screen. Past the layer its edge px
+    repeat, as a clamped texture's. [around] — tiles so far around that smaller copies of them, drawn filtered, average only real px about v's rect. Off the main
+    thread */
+    private fun sampled(v: Spot, around: Boolean, f: Filter? = null, full: (worker: Int, px: Bitmap, x: Int, y: Int) -> Unit = { _, _, _, _ -> }): Array<Bitmap?> {
         val n = v.n
         val m = 1 shl n
         val lw = (fw + m - 1) shr n
@@ -369,7 +383,7 @@ class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bit
                 val sx = (tx shl n) + j % m * TILE
                 val sy = (ty shl n) + j / m * TILE
                 if (sx >= fw || sy >= fh) continue
-                full(wk, d.read(sx, sy), sx, sy)
+                full(wk, d.read(sx, sy, f), sx, sy)
                 d.px.copyPixelsToBuffer(ByteBuffer.wrap(d.raw))
                 d.raw.clampPad(minOf(TILE, fw - sx), minOf(TILE, fh - sy), 4)
                 d.raw.shrinkInto(n, d.out, j % m * (TILE shr n), j / m * (TILE shr n))
@@ -417,37 +431,18 @@ class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bit
     }
 
     private val paints = MaskPaints()
-    private val solid = Paint()
-    private val cut = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
-    private val keep = keepPaint().apply { isFilterBitmap = true }
     private val plain = tilePaint()
     private val over = tilePaint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.SRC) }
-    private val asIs = Tone(emptyList())
     private val cell = RectF()
 
-    /** In its layer's offscreen, as the bake: the selected part erased, then added back corrected — the computed preview's px or the layer's. Draw phase */
+    /** In its layer's offscreen, as the bake: the selected part replaced by it corrected — the computed preview's px or the layer's. Draw phase */
     override fun draw(c: Canvas, l: Layer, filter: Boolean, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, k: Float) {
-        val p = if (replacing) recoloring else relighting
-        val g = p.coarse
-        val fn = p.fine
+        val g = computed.coarse
+        val fn = computed.fine
         if (g != null) aim(c, k, g, fn)
-        val t = if (replacing) null else tone
+        val t = tone
         if (g == null && t == null) return
-        val f = sel?.feather
-        c.save()
-        sel?.let { s ->
-            c.concat(toFile)
-            if (f != null) c.clipRect(f.bounds) else c.clipPath(s.outline)
-            c.concat(fromFile)
-        }
-        if (f == null) c.drawColor(android.graphics.Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-        else {
-            c.saveClipLayer(cut)
-            c.drawPaint(solid)
-            edge(c, f)
-            c.restore()
-        }
-        (t ?: asIs).add(c, { u ->
+        c.replaceSelected(sel, toFile, fromFile, t) { u ->
             if (g == null) u.drawMasked(bmp, l.fileW, l.fileH, mask, patch, k, 255, filter, paints)
             else {
                 u.save()
@@ -456,65 +451,82 @@ class CorrectionTool(l: Layer, private val sel: Selection?, private val src: Bit
                 fn?.draw(u, over, filter, cell, k)
                 u.restore()
             }
-        }) { if (f != null) edge(it, f) }
-        c.restore()
-    }
-
-    /** Keeps the soft edge's share */
-    private fun edge(c: Canvas, f: Feather) {
-        c.save()
-        c.concat(toFile)
-        f.draw(c, keep)
-        c.restore()
+        }
     }
 }
 
-/** Full-width, slides in from the bottom; [onPick] — a tile tapped. Keep it composed: images are decoded off the main thread at the first opening and kept, so opening
-and scrolling don't stutter; the scroll position is kept too */
+/** Of [tiles] (corrections, effects): full-width, slides in from the bottom; [onPick] — a tile tapped. Keep it composed: images are decoded off the main thread at
+the first opening and kept, so opening and scrolling don't stutter; the scroll position is kept too */
 @Composable
-fun CorrectionCarousel(shown: Boolean, modifier: Modifier, onPick: (Correction) -> Unit) {
+fun <T : CarouselItem> TileCarousel(shown: Boolean, tiles: List<T>, modifier: Modifier, onPick: (T) -> Unit) {
     val res = LocalResources.current
     var images by remember { mutableStateOf<List<ImageBitmap>?>(null) }
     val scroll = rememberLazyListState()
-    if (shown && images == null) LaunchedEffect(Unit) { images = withContext(Dispatchers.IO) { Correction.entries.map { ImageBitmap.imageResource(res, it.image) } } }
+    if (shown && images == null) LaunchedEffect(Unit) { images = withContext(Dispatchers.IO) { tiles.map { ImageBitmap.imageResource(res, it.image) } } }
     AnimatedVisibility(shown, modifier, PANEL_IN, PANEL_OUT) {
         // Its scrolling takes the presses: they don't reach the press-outside layer under it
-        LazyRow(Modifier.fillMaxWidth().height(CAROUSEL_H).background(BarBg), scroll, PaddingValues(GAP), horizontalArrangement = Arrangement.spacedBy(GAP)) {
-            items(Correction.entries) { c -> CorrectionTile(c, images?.get(c.ordinal)) { onPick(c) } }
+        LazyRow(Modifier.fillMaxWidth().height(CAROUSEL_H).background(BarBg), scroll, PaddingValues(GAP), horizontalArrangement = Arrangement.spacedBy(GAP),
+            overscrollEffect = null) {
+            itemsIndexed(tiles) { i, t -> CarouselTile(t.title, images?.get(i)) { onPick(t) } }
         }
     }
 }
 
+/** A two-line title takes the image's bottom: the image keeps its scale, cut below */
 @Composable
-private fun CorrectionTile(c: Correction, image: ImageBitmap?, onClick: () -> Unit) =
+private fun CarouselTile(title: Int, image: ImageBitmap?, onClick: () -> Unit) =
     Column(Modifier.width(TILE_W).fillMaxHeight().clip(SmallShape).border(1.dp, TranslucentGray, SmallShape).plainClickable(onClick)) {
-        val area = Modifier.size(TILE_W, IMAGE_H)
-        if (image != null) Image(image, null, area, contentScale = ContentScale.Crop) else Spacer(area)
-        Box(Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp), Alignment.Center) {
-            Text(stringResource(c.title), color = Color.White, fontSize = 13.sp, lineHeight = 16.sp, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        val area = Modifier.fillMaxWidth().weight(1f)
+        if (image != null) Image(image, null, area, alignment = Alignment.TopCenter, contentScale = ContentScale.Crop) else Spacer(area)
+        TileTitle(stringResource(title), Modifier.fillMaxWidth().heightIn(min = LABEL_H).padding(LABEL_PAD))
     }
 
-/** Runs the corrections' preview; the open one's panel, away while the color panel is open. [onCancel], [onConfirm] — Replace color's: the rest have none */
+/** Up to two lines, each centered, 1 dp apart, broken only at spaces: the first takes the most words that fit; a line too wide ends in an ellipsis */
 @Composable
-fun CorrectionOverlay(s: CorrectionTool, o: CorrectionOptions, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) {
-    LaunchedEffect(s) { s.preview(o) }
+private fun TileTitle(text: String, modifier: Modifier) {
+    val style = LocalTextStyle.current.merge(TextStyle(fontSize = 13.sp, lineHeight = 16.sp))
+    val measurer = rememberTextMeasurer()
+    val width = with(LocalDensity.current) { (TILE_W - LABEL_PAD * 2).roundToPx() }
+    val lines = remember(text, style, width) {
+        val words = text.split(' ')
+        var k = words.size
+        while (k > 1 && measurer.measure(words.take(k).joinToString(" "), style).size.width > width) k--
+        listOf(words.take(k), words.drop(k)).filter { it.isNotEmpty() }.map { it.joinToString(" ") }
+    }
+    Column(modifier, Arrangement.spacedBy(1.dp, Alignment.CenterVertically), Alignment.CenterHorizontally) {
+        lines.forEach { Text(it, color = Color.White, textAlign = TextAlign.Center, maxLines = 1, overflow = TextOverflow.Ellipsis, style = style) }
+    }
+}
+
+/** Runs the carousel's corrections' preview; the open one's panel, away while the color panel is open */
+@Composable
+fun CorrectionOverlay(s: CorrectionTool, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit) {
+    LaunchedEffect(s) { s.preview() }
     s.open?.let { k ->
-        Box(Modifier.fillMaxSize()) {
-            val away = open == ToolPopup.Color
-            val shown = remember { MutableTransitionState(false) }
-            LaunchedEffect(away) { shown.targetState = !away }
-            AnimatedVisibility(shown, Modifier.align(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) {
-                val w = Modifier.width(PANEL_W)
-                when (k) {
-                    Correction.ReplaceColor -> ReplacePanel(o, picture, onPopup, w, onCancel, onConfirm)
-                    Correction.ShadowsHighlights -> TonesPanel(s.tones, w)
-                    Correction.ColorBalance -> BalancePanel(s.balance, w)
-                    else -> BottomPanel(false, null, w, buttons = { CorrectionSlider(k.title, listOf(k.title), s.values[k.ordinal], k.range) { s.values[k.ordinal] = it } }) {}
-                }
+        val v = s.values[k.ordinal]
+        SlidingPanel(open == ToolPopup.Color) { w ->
+            when {
+                k == Correction.Shade -> ShadePanel(v, s.shade, picture, onPopup, w)
+                k.sliders.size > 3 -> PagedPanel(k, v, w)
+                else -> SlidersPanel(k, v, w)
             }
         }
     }
+}
+
+/** Runs Replace color's preview — [s] made with [o]; its panel, away while the color panel is open */
+@Composable
+fun ReplaceOverlay(s: CorrectionTool, o: CorrectionOptions, picture: PipetteSource, open: ToolPopup?, onPopup: (OpenPopup?) -> Unit, onCancel: () -> Unit, onConfirm: () -> Unit) {
+    LaunchedEffect(s) { s.preview() }
+    SlidingPanel(open == ToolPopup.Color) { w -> ReplacePanel(o, picture, onPopup, w, onCancel, onConfirm) }
+}
+
+/** Slides in from the bottom, away while [away]; [content] gets its width: the widest row's, weighted items fill the rest */
+@Composable
+private fun SlidingPanel(away: Boolean, content: @Composable (Modifier) -> Unit) = Box(Modifier.fillMaxSize()) {
+    val shown = remember { MutableTransitionState(false) }
+    LaunchedEffect(away) { shown.targetState = !away }
+    AnimatedVisibility(shown, Modifier.align(Alignment.BottomCenter), PANEL_IN, PANEL_OUT) { content(Modifier.width(IntrinsicSize.Max)) }
 }
 
 /** Row 1: the samples, the color in their place, Contiguous (off till a used sample is picked by the pipette); row 2: amount, ✓; row 3: threshold, Cancel */
@@ -526,10 +538,10 @@ private fun ReplacePanel(o: CorrectionOptions, picture: PipetteSource, onPopup: 
         ColorPick(R.string.correction_replace_with, listOf(o.to), ColorOpacity(o.toOpacity), picture, onPopup, Modifier.weight(1f))
         ToggleBtn(AppIcons.LinkVertical, o.contiguous, enabled = o.seeds.isNotEmpty(), rotation = { 90f }) { o.contiguous = !o.contiguous }
     }, more = {
-        CorrectionSlider(REPLACE[0], REPLACE, o.amount.value, PERCENT) { o.amount.value = it }
+        AlignedSlider(REPLACE[0], REPLACE, o.amount.value, PERCENT) { o.amount.value = it }
         ConfirmBtn(onConfirm)
     }, fieldsGap = 16.dp) {
-        CorrectionSlider(REPLACE[1], REPLACE, o.threshold.value, PERCENT) { o.threshold.value = it }
+        AlignedSlider(REPLACE[1], REPLACE, o.threshold.value, PERCENT) { o.threshold.value = it }
         CancelBtn(onCancel)
     }
 
@@ -548,41 +560,58 @@ private fun ColorPick(label: Int, colors: List<ColorOptions>, opacity: ColorOpac
         }
     }
 
-/** Two sliders a page; the arrows turn the pages, each off on its end page */
+/** [k]'s sliders [v], one a row: up to three */
 @Composable
-private fun TonesPanel(tones: MutableList<Int>, modifier: Modifier) {
-    var page by remember { mutableIntStateOf(0) }
+private fun SlidersPanel(k: Correction, v: MutableList<Int>, modifier: Modifier) {
+    val more: (@Composable RowScope.() -> Unit)? = if (v.size > 1) { { CorrectionSlider(k, v, 1) } } else null
+    BottomPanel(v.size > 2, null, modifier, buttons = { CorrectionSlider(k, v, 0) }, more = more) { if (v.size > 2) CorrectionSlider(k, v, 2) }
+}
+
+/** [k]'s sliders [v], two a page: four */
+@Composable
+private fun PagedPanel(k: Correction, v: MutableList<Int>, modifier: Modifier) {
+    val page = remember { mutableIntStateOf(0) }
     BottomPanel(false, null, modifier, buttons = {
-        TonesRow(page, 0, tones)
-        ToolBtn(AppIcons.Back, enabled = page > 0, rotation = { 90f }) { page = 0 }
+        PagedRow(page.intValue) { CorrectionSlider(k, v, 2 * it) }
+        PageBtn(page, up = true)
     }, more = {
-        TonesRow(page, 1, tones)
-        ToolBtn(AppIcons.Back, enabled = page == 0, rotation = { -90f }) { page = 1 }
+        PagedRow(page.intValue) { CorrectionSlider(k, v, 2 * it + 1) }
+        PageBtn(page, up = false)
     }) {}
 }
 
-/** The next page comes from below, the previous from above */
+/** Row 1: glow, [color]; row 2: intensity */
 @Composable
-private fun RowScope.TonesRow(page: Int, row: Int, tones: MutableList<Int>) =
+private fun ShadePanel(v: MutableList<Int>, color: ColorOptions, picture: PipetteSource, onPopup: (OpenPopup?) -> Unit, modifier: Modifier) =
+    BottomPanel(false, null, modifier, buttons = {
+        CorrectionSlider(Correction.Shade, v, 0)
+        ColorBtn(color, null, picture, onPopup, Modifier, BTN)
+    }, more = { CorrectionSlider(Correction.Shade, v, 1) }) {}
+
+@Composable
+private fun RowScope.CorrectionSlider(k: Correction, v: MutableList<Int>, i: Int) =
+    AlignedSlider(k.sliders[i], k.sliders, v[i], k.range, resettable = k.range == SIGNED) { v[i] = it }
+
+/** A row of a two-page panel: the next page comes from below, the previous from above */
+@Composable
+fun RowScope.PagedRow(page: Int, content: @Composable RowScope.(page: Int) -> Unit) =
     AnimatedContent(page, Modifier.weight(1f).clipToBounds(), {
         val next = targetState > initialState
         slideInVertically(PAGE_ANIM) { if (next) it else -it } togetherWith slideOutVertically(PAGE_ANIM) { if (next) -it else it }
-    }, label = "tones") { p ->
-        val k = 2 * p + row
-        Row(verticalAlignment = Alignment.CenterVertically) { CorrectionSlider(TONES[k], TONES, tones[k], SIGNED) { tones[k] = it } }
-    }
+    }, label = "page") { p -> Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) { content(p) } }
 
-/** A channel a row */
+/** Turns [page] to the first ([up]) or the second; off on it */
 @Composable
-private fun BalancePanel(b: MutableList<Int>, modifier: Modifier) = BottomPanel(true, null, modifier, buttons = { Channel(b, 0) }, more = { Channel(b, 1) }) { Channel(b, 2) }
+fun PageBtn(page: MutableIntState, up: Boolean) =
+    ToolBtn(AppIcons.Back, enabled = (page.intValue > 0) == up, rotation = { if (up) 90f else -90f }) { page.intValue = if (up) 0 else 1 }
 
+/** [label] as wide as the widest of [labels]: a panel's sliders line up. [set] gets a value within [range]; [resettable] — as PanelSlider's */
 @Composable
-private fun RowScope.Channel(b: MutableList<Int>, i: Int) = CorrectionSlider(CHANNELS[i], CHANNELS, b[i], SIGNED) { b[i] = it }
-
-/** In %; [label] as wide as the widest of [labels]: a panel's sliders line up. [set] gets a value within [range] */
-@Composable
-private fun RowScope.CorrectionSlider(label: Int, labels: List<Int>, value: Int, range: IntRange, set: (Int) -> Unit) {
+fun RowScope.AlignedSlider(label: Int, labels: List<Int>, value: Int, range: IntRange, suffix: String = "%", resettable: Boolean = true, set: (Int) -> Unit) {
     val within = { v: Int -> set(v.coerceIn(range)) }
-    PanelSlider({ Box { labels.forEach { FieldText(stringResource(it), if (it == label) Color.White else Color.Transparent) } } }, value, range, Modifier.weight(1f), "%",
-        onChange = within, onApply = within)
+    PanelSlider({ AlignedLabel(label, labels) }, value, range, Modifier.weight(1f), suffix, resettable, onChange = within, onApply = within)
 }
+
+/** [label] as wide as the widest of [labels], at its end: next to the field */
+@Composable
+fun AlignedLabel(label: Int, labels: List<Int>) = Box(contentAlignment = Alignment.CenterEnd) { labels.forEach { FieldText(stringResource(it), if (it == label) Color.White else Color.Transparent) } }

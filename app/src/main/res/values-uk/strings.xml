@@ -109,7 +109,7 @@
     <string name="invert_selection">Інверсія виділення</string>
     <string name="transform_selection">Трансформація виділення</string>
     <string name="expand">Розширити</string>
-    <string name="frame">Рамка</string>
+    <string name="frame">Кадрування</string>
     <string name="size">Розмір</string>
     <string name="size_canvas">Розмір полотна</string>
     <string name="fill_stroke">Заливка/Обведення</string>
@@ -128,11 +128,15 @@
     <string name="fonts_user_hint">Помістіть файли шрифтів «.ttf», «.otf» або «.ttc» у теку «.imagoedit/.fonts». Підтримуються як звичайні, так і варіативні шрифти.</string>
     <string name="correction_invert">Інверсія</string>
     <string name="correction_black_white">Чорно-білий</string>
+    <string name="correction_invert_black_white">Інверсія й чорно-білий</string>
     <string name="correction_contrast">Контрастність</string>
+    <string name="correction_brightness_contrast">Яскравість і контрастність</string>
     <string name="correction_temperature">Температура</string>
     <string name="correction_replace_color">Замінити колір</string>
-    <string name="correction_shadows_highlights">Тіні/Світло</string>
+    <string name="correction_shadows_highlights">Тіні й світло</string>
     <string name="correction_color_balance">Колірний баланс</string>
+    <string name="correction_sharpness">Різкість</string>
+    <string name="correction_shade">Відтінок</string>
     <string name="correction_sample">Зразок:</string>
     <string name="correction_replace_with">Замінити на:</string>
     <string name="correction_highlights">Підсвітка</string>
@@ -142,4 +146,10 @@
     <string name="color_red">Червоний</string>
     <string name="color_green">Зелений</string>
     <string name="color_blue">Синій</string>
+    <string name="effect_gaussian_blur">Розмиття за Гаусом</string>
+    <string name="effect_motion_blur">Спрямоване розмиття</string>
+    <string name="effect_shadow">Тінь</string>
+    <string name="effect_glow">Світіння</string>
+    <string name="angle">Кут</string>
+    <string name="offset">Зміщення</string>
 </resources>

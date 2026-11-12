@@ -111,6 +111,7 @@ class ToolOptions(settings: AppSettings) {
     val fill = FillOptions(settings)
     val transition = TransitionOptions(settings)
     val correction = CorrectionOptions(settings)
+    val effect = EffectOptions(settings)
 }
 
 interface ToolStyle {

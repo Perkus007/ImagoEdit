@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -95,6 +96,11 @@ class TextState(val layer: Int, id: Long, cw: Int, ch: Int, val options: TextOpt
     private val layout by derivedStateOf { content.layout(placeholder) }
 
     override val empty get() = content.text.isBlank()
+
+    private val opened = options.size.value / TEXT_REF // the frame's scale at opening
+
+    /** The current text at the size it was opened with */
+    override val original get() = Size(layout.w * opened, layout.h * opened)
 
     /** Canvas px */
     val size get() = TEXT_REF * t.h / layout.h

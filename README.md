@@ -8,8 +8,7 @@ It works fully offline: no ads, no analytics, no internet permission.
 
 - Up to 100 MP canvases, 16 000 px per side.
 - Layers with blend modes, selections, drawing, clone stamp, healing brush, eraser, blur brush, text, opacity transition.
-- Image corrections: brightness, contrast, saturation, temperature, shadows/highlights, color balance, replace color and more.
-  Several can be set together and applied as one step.
+- Image corrections and effects: brightness, contrast, sharpness, saturation, temperature, shadows/highlights, color balance, tint, replace color, Gaussian and directional blur, shadow, glow and more.
 - Export to PNG, JPEG, WebP and AVIF with its own native JPEG/WebP encoders.
 - Projects live in folder on the device and stay there when the app is uninstalled.
 - Project autosave.
@@ -90,6 +89,7 @@ It works fully offline: no ads, no analytics, no internet permission.
 - Fonts: the system default, the bundled Caveat, Handjet, Roboto Slab and Tiny5, your own fonts (`.ttf`, `.otf`, `.ttc`) and a Favorites tab.
 - Alignment, size, letter spacing,
   weight on variable fonts, color, opacity and rotation.
+- Double-tap the canvas to fit the text into it, centered. Double-tap again to return the text to the size it started with, also centered.
 
 ### Fill / Stroke
 - Fill the selection (or the whole layer) with a color.
@@ -100,6 +100,17 @@ It works fully offline: no ads, no analytics, no internet permission.
 - Fades the layer's opacity: **Linear** between two points, or **Radial** from the center of a circle or ellipse to its edge.
 - Opacity of each end 0–100 %, invert, snapping to the canvas center, middle lines, corners and side midpoints.
 - Separate Undo/Redo inside the tool.
+
+### Corrections and effects
+- **Invert**, **Black & white**, **Saturation**, **Brightness**, **Contrast**, **Sharpness**, **Temperature**, **Shadows/Highlights**, **Color balance**, **Tint**.
+- **Replace color**: up to five samples picked with the eyedropper, a new color with its opacity, intensity and tolerance.
+  Can replace only the area connected to the picked points.
+- **Gaussian blur** and **Directional blur**
+- With a selection, corrections and effects change only the inside of it.
+- **Shadow**: angle, offset, blur, color and opacity.
+- **Glow**: blur, color and intensity.
+- Angle knob: press and hold to show a dial, then move the finger around it.
+  Near the dial the angle changes by 1°, farther away by 10°, then by 45°.
 
 ### Canvas
 - **Frame**: crop the canvas; with a selection the frame starts at its bounds.
@@ -227,14 +238,14 @@ app/src/main/
 │   ├── MainActivity.kt    entry point, Open with / Share intents
 │   ├── AppViewModel.kt    app state: projects, layer operations, history, autosave, export
 │   ├── data/              model, disk format, raster engine (tiles, masks, strokes,
-│   │                      healing, selection edges), image corrections, import/export,
+│   │                      healing, selection edges), image corrections and effects, import/export,
 │   │                      fonts, text layout
 │   └── ui/
 │       ├── menu/          project list, export panel, settings, project dialogs
 │       ├── editor/        editor screen, canvas, tools and their panels
 │       ├── common/        dialogs, popovers, number pad, sliders, icons
 │       └── theme/
-├── cpp/                   JNI JPEG/WebP encoders, pixel loops (brushes, smudge, corrections),
+├── cpp/                   JNI JPEG/WebP encoders, pixel loops (brushes, smudge, corrections, directional blur),
 │                          CMake build of libjpeg-turbo and libwebp
 └── res/                   strings (en, ru, uk), bundled fonts, license texts
 ```

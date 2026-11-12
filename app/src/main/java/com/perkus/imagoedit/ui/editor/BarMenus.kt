@@ -17,7 +17,7 @@ enum class SelectAction(override val icon: ImageVector, override val title: Int)
 }
 
 enum class Tools3Action(override val icon: ImageVector, override val title: Int) : ToolStyle {
-    Frame(AppIcons.FrameCrop, R.string.frame), SizeCanvas(AppIcons.Scaling, R.string.size_canvas), Rotation(AppIcons.RefreshCcw, R.string.rotate_canvas),
+    Frame(AppIcons.Crop, R.string.frame), SizeCanvas(AppIcons.Scaling, R.string.size_canvas), Rotation(AppIcons.RefreshCcw, R.string.rotate_canvas),
     FillStroke(AppIcons.PaintBucket, R.string.fill_stroke), Text(AppIcons.Text, R.string.text), Transition(AppIcons.Opacity, R.string.transition)
 }
 

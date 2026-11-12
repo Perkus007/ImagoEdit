@@ -37,4 +37,12 @@ internal object Kernels {
     /** Relight's Guide: [out] gets Σα, ΣαL, ΣαL² (L — lightness) of each of [src]'s cells 2ⁿ px a side (a row of them ⌈width / 2ⁿ⌉) over src's px
     [x0]..[x1) × [y0]..[y1), the rest 0 */
     external fun lightness(src: Bitmap, x0: Int, y0: Int, x1: Int, y1: Int, n: Int, out: FloatArray)
+
+    /** Sharpen.into: [out]'s px (i, j) — [src]'s (i + [m], j + m) through the unsharp mask of the luma, σ [sigma] px, [amount]×; src — out's px with m px
+    (the kernel's radius, ≤ 16) about them */
+    external fun sharpen(src: Bitmap, out: Bitmap, m: Int, sigma: Float, amount: Float)
+
+    /** Streaked.into: [out]'s px (p, s) — x, y if [alongX], else y, x — from ([p0], [s0]) the box average of [src]'s px (p + k, s + r(p + k) − r(p)) for |k| ≤ [n],
+    those at |k| = n + 1 weighing [edge] / 256; [r] — r(i) from p0 − n − 1. src — rendered from ([pa], [sa]), its px clamped */
+    external fun streak(src: Bitmap, out: Bitmap, alongX: Boolean, pa: Int, sa: Int, p0: Int, s0: Int, n: Int, edge: Int, r: IntArray)
 }

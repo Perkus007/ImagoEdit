@@ -63,7 +63,7 @@ private fun gauss(px: ByteArray, tmp: ByteArray, w: Int, h: Int, sx: Float, sy: 
 /** A [w]×[h] raster, Gaussian-blurred by σ [sigma] (raster px) tile by tile, raster edge repeated; σ over [limit] — in a copy 2ⁿ× smaller, stretched back.
 3σ ≥ CELLS: the copy comes from cells — TILE blocks drawn once each and halved, shared by the tiles around; else each tile draws its surroundings itself.
 Tiles may be made on several threads at once */
-class Blurred(private val w: Int, private val h: Int, private val sigma: Float, private val limit: Float) {
+class Blurred(private val w: Int, private val h: Int, private val sigma: Float, private val limit: Float) : Filter {
     private val n = run { var n = 0; while (TILE shr n > 1 && sigma / (1 shl n) > limit) n++; n }
     private val cols = (w + TILE - 1) / TILE
     private val cells = if (3 * sigma >= CELLS) arrayOfNulls<ByteArray>(cols * ((h + TILE - 1) / TILE)) else null
@@ -71,7 +71,7 @@ class Blurred(private val w: Int, private val h: Int, private val sigma: Float, 
     private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
 
     /** [out] (TILE²) gets tile ([x0], [y0]) of the raster [render] draws (the calling thread's) */
-    fun into(out: Bitmap, x0: Int, y0: Int, render: (Bitmap, Int, Int) -> Unit) {
+    override fun into(out: Bitmap, x0: Int, y0: Int, render: (Bitmap, Int, Int) -> Unit) {
         val a = Rect() // raster px the copy covers
         val c = cells
         val b = if (c == null) around(out, x0, y0, a, render) else gathered(c, out, x0, y0, a, render)

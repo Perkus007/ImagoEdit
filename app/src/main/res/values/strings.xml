@@ -109,7 +109,7 @@
     <string name="invert_selection">Invert</string>
     <string name="transform_selection">Transform selection</string>
     <string name="expand">Expand</string>
-    <string name="frame">Frame</string>
+    <string name="frame">Crop Tool</string>
     <string name="size">Size</string>
     <string name="size_canvas">Size canvas</string>
     <string name="fill_stroke">Fill/Stroke</string>
@@ -128,11 +128,15 @@
     <string name="fonts_user_hint">Put «.ttf», «.otf» or «.ttc» font files into the «.imagoedit/.fonts» folder. Both standard and variable fonts are supported.</string>
     <string name="correction_invert">Invert</string>
     <string name="correction_black_white">Black &amp; white</string>
+    <string name="correction_invert_black_white">Invert &amp; B&amp;W</string>
     <string name="correction_contrast">Contrast</string>
+    <string name="correction_brightness_contrast">Brightness &amp; contrast</string>
     <string name="correction_temperature">Temperature</string>
     <string name="correction_replace_color">Replace color</string>
-    <string name="correction_shadows_highlights">Shadows/Highlights</string>
+    <string name="correction_shadows_highlights">Shadows &amp; highlights</string>
     <string name="correction_color_balance">Color balance</string>
+    <string name="correction_sharpness">Sharpness</string>
+    <string name="correction_shade">Tint</string>
     <string name="correction_sample">Sample:</string>
     <string name="correction_replace_with">Replace with:</string>
     <string name="correction_highlights">Highlights</string>
@@ -142,4 +146,10 @@
     <string name="color_red">Red</string>
     <string name="color_green">Green</string>
     <string name="color_blue">Blue</string>
+    <string name="effect_gaussian_blur">Gaussian blur</string>
+    <string name="effect_motion_blur">Directional blur</string>
+    <string name="effect_shadow">Shadow</string>
+    <string name="effect_glow">Glow</string>
+    <string name="angle">Angle</string>
+    <string name="offset">Offset</string>
 </resources>

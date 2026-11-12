@@ -45,7 +45,7 @@ object AppIcons {
     val Resize = svg("M5 3H3v2M8 3h2M13 3h2v2M15 8v2M15 13v2h-2M8 15h2M5 15H3v-2M3 8v2M19 3v12M16 6l3-3 3 3M16 12l3 3 3-3M3 19h12M6 16l-3 3 3 3M12 16l3 3-3 3", strokeWidth = 2f)
     val DottedLine = svg(d = "M2 12h2M8 12h2M14 12h2M20 12h2", strokeWidth = 2f)
     val WaveToStraightLine = svg(d = "M2 10q1.2-2.5 2.5-2M6.5 10.5l1 3M9.5 16q1.2 1.5 2-2M13.5 12h1.5M17.5 12h1.5M21.5 12h1", strokeWidth = 2f)
-    val FrameCrop = svg(d = "M22 6H2M22 18H2M6 2v20M18 2v20", strokeWidth = 2f)
+    val Crop = svg(d = "M6 2v14a2 2 0 0 0 2 2h14M18 22V8a2 2 0 0 0-2-2H2", strokeWidth = 2f)
     val Text = svg("M12 4v16M4 7V5a1 1 0 0 1 1-1h14a1 1 0 0 1 1 1v2M9 20h6", strokeWidth = 2f)
     val StarFilled = svg("M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z")
     val TextAlignJustifyStart = svg("M3 5h18M3 12h18M3 19h10", strokeWidth = 2f)
@@ -75,6 +75,8 @@ object AppIcons {
     val SlidersHorizontal = svg(d = "M10 5H3M12 19H3M14 3v4M16 17v4M21 12h-9M21 19h-5M21 5h-7M8 10v4M8 12H3", strokeWidth = 2f)
     // скрытый глаз
     val EyeOff = svg(d = "M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49M14.084 14.158a3 3 0 0 1-4.242-4.242M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143M2 2l20 20", strokeWidth = 2f)
+    // эффекты
+    val SquareSparkles = svg(d = "M11 15H7M15.41 2.49a0.6 0.6 0 0 1 1.18 0l0.63 3.334a1.2 1.2 0 0 0 0.956 0.955l3.334 0.631a0.6 0.6 0 0 1 0 1.18l-3.334 0.63a1.2 1.2 0 0 0-0.955 0.956l-0.631 3.334a0.6 0.6 0 0 1-1.18 0l-0.63-3.334a1.2 1.2 0 0 0-0.956-0.955L10.49 8.59a0.6 0.6 0 0 1 0-1.18l3.334-0.63a1.2 1.2 0 0 0 0.955-0.956zM21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6M9 13v4", strokeWidth = 2f)
 
     /** Кнопки инструмента "Move" */
     val Move = svg("M12 2v20M2 12h20M9 5l3-3 3 3M15 19l-3 3-3-3M5 9l-3 3 3 3M19 9l3 3-3 3", strokeWidth = 2f)

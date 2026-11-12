@@ -171,8 +171,8 @@ private fun TypeBtn(s: TextState, open: Boolean, onPopup: (OpenPopup?) -> Unit) 
 private fun TypePopover(s: TextState) =
     PopoverCard(Modifier.fillMaxSize().padding(bottom = s.panelH() + GAP).wrapContentSize(Alignment.BottomCenter).consumeTaps().width(PANEL_W)) {
         Row(Modifier.fillMaxWidth(), Arrangement.spacedBy(16.dp), Alignment.CenterVertically) {
-            PopoverSlider(SPACING_LABEL, s.content.spacing, s.options.spacing.range, "%", s::finish, s::slideSpacing, s::setSpacing)
-            s.content.font.weights?.let { r -> PopoverSlider(WEIGHT_LABEL, s.weight, r, "", s::finish, s::slideWeight, s::setWeight) }
+            PopoverSlider(SPACING_LABEL, s.content.spacing, s.options.spacing.range, "%", s::finish, s::slideSpacing, resettable = true, onApply = s::setSpacing)
+            s.content.font.weights?.let { r -> PopoverSlider(WEIGHT_LABEL, s.weight, r, "", s::finish, s::slideWeight, onApply = s::setWeight) }
         }
     }
 

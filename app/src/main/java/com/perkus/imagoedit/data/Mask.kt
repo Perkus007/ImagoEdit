@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BlendMode
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
@@ -58,6 +59,38 @@ class MaskPaints {
 /** The brush's live strokes of layer [l] (as drawn), inside its offscreen, in its file px; [bmp]…[k] — the layer as drawMasked draws it (a clone redraws it shifted) */
 interface MaskOverlay {
     fun draw(c: Canvas, l: Layer, filter: Boolean, bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, k: Float)
+}
+
+/** A tool's preview of layer [layer] in its offscreen while [shows] (read in the draw phase) */
+interface LayerOverlay : MaskOverlay {
+    val layer: Long
+    val shows: Boolean
+}
+
+/** Keeps what's under by a soft edge drawn at any scale */
+internal val keepSoft = keepPaint().apply { isFilterBitmap = true }
+private val dropSoft = Paint().apply { isAntiAlias = false; isFilterBitmap = true; xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_OUT) }
+
+/** What's drawn so far × what [sel] selects ([inside]) or × the rest; [m] — canvas px → this canvas' px. Any thread */
+fun Canvas.keepSelected(sel: Selection, m: Matrix, inside: Boolean) {
+    save()
+    concat(m)
+    val f = sel.feather
+    when {
+        f == null -> {
+            if (inside) clipOutPath(sel.outline) else clipPath(sel.outline)
+            drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+        }
+        inside -> {
+            save()
+            clipOutRect(f.bounds)
+            drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+            restore()
+            f.draw(this, keepSoft)
+        }
+        else -> f.draw(this, dropSoft)
+    }
+    restore()
 }
 
 /** [bmp] (or a smaller copy; null — none) over [w]×[h] file px × [mask] + [patch] by ADD: mask and patch are disjoint, so filtered coarse levels sum to a whole

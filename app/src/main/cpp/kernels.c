@@ -1,9 +1,10 @@
-// Pixel loops of brush strokes (Stroke.kt Dab: visits), of the Finger smudge (Blur.kt Smear.dab), of Replace color and of Shadows/Highlights
-// (Correction.kt); Kotlin side — Kernels.kt
+// Pixel loops of brush strokes (Stroke.kt Dab: visits), of the Finger smudge (Blur.kt Smear.dab), of Replace color, Shadows/Highlights and Sharpness
+// (Correction.kt), of directional blur (Effect.kt Streaked); Kotlin side — Kernels.kt
 #include <android/bitmap.h>
 #include <jni.h>
 #include <math.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define KEEP_ONE (1 << 15)
@@ -702,4 +703,142 @@ JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_lightness(JNIEnv* 
     }
     FREE(out, f, 0);
     unlock_px(env, src, sp, NULL, NULL, err);
+}
+
+/* Sharpness (Correction.kt Sharpen): an unsharp mask of the luma. A px' surroundings — the Gaussian (σ px) mean of the px about it weighed by alpha: transparent
+ones don't count, the layer's edge gets no halo. The px' gamma-encoded luma (detail as the eye sees it) moves off theirs amount×, each channel alike: no color
+fringes; past 0..1 the chroma gives way. Alpha kept */
+#define SHARP_REACH 16 /* most kernel radius, px */
+
+/* Sharpen.into: out's px (i, j) — src's px (i + m, j + m) sharpened; src — out's px with m px (the kernel's radius) about them */
+JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_sharpen(JNIEnv* env, jobject thiz, jobject src, jobject out, jint m, jfloat sigma, jfloat amount) {
+    AndroidBitmapInfo si, oi;
+    int apart = !(*env)->IsSameObject(env, src, out);
+    void* sp = lock_px(env, src, &si);
+    void* op = sp && apart ? lock_px(env, out, &oi) : NULL;
+    const char* err = !sp ? "Can't read the bitmap" : !op ? "Can't write the bitmap" : m < 0 || m > SHARP_REACH || !(sigma > 0.f)
+        || si.width != oi.width + 2u * (uint32_t) m || si.height != oi.height + 2u * (uint32_t) m ? "Bad sharpen" : NULL;
+    float* rows = !err ? malloc((size_t) si.height * oi.width * 4 * sizeof(float)) : NULL; /* src's rows blurred over out's columns: premultiplied RGBA */
+    if (!err && !rows) err = "Out of memory";
+    if (!err) {
+        uint32_t ow = oi.width, n = 2 * (uint32_t) m + 1;
+        float w[2 * SHARP_REACH + 1], sum = 0.f;
+        for (uint32_t k = 0; k < n; k++) {
+            float d = (float) k - (float) m;
+            w[k] = expf(-0.5f * d * d / (sigma * sigma));
+            sum += w[k];
+        }
+        for (uint32_t k = 0; k < n; k++) w[k] /= sum;
+        for (uint32_t y = 0; y < si.height; y++) {
+            const uint8_t* s = (const uint8_t*) sp + (size_t) y * si.stride;
+            float* r = rows + (size_t) y * ow * 4;
+            for (uint32_t x = 0; x < ow; x++) {
+                float a[4] = { 0.f };
+                const uint8_t* q = s + 4 * (size_t) x;
+                for (uint32_t k = 0; k < n; k++)
+                    for (int c = 0; c < 4; c++) a[c] += w[k] * q[4 * k + c];
+                memcpy(r + 4 * (size_t) x, a, sizeof a);
+            }
+        }
+        for (uint32_t y = 0; y < oi.height; y++) {
+            const uint32_t* s = (const uint32_t*) ((const uint8_t*) sp + (size_t) (y + (uint32_t) m) * si.stride) + m;
+            uint32_t* d = (uint32_t*) ((uint8_t*) op + (size_t) y * oi.stride);
+            for (uint32_t x = 0; x < ow; x++) {
+                uint32_t c = s[x], al = c >> 24;
+                if (!al) {
+                    d[x] = c;
+                    continue;
+                }
+                /* b[3] > 0: the px' own alpha has the center's weight */
+                float b[4] = { 0.f }, p[3], q[3];
+                for (uint32_t k = 0; k < n; k++) {
+                    const float* r = rows + ((size_t) (y + k) * ow + x) * 4;
+                    for (int i = 0; i < 4; i++) b[i] += w[k] * r[i];
+                }
+                for (int i = 0; i < 3; i++) {
+                    p[i] = (float) ((c >> (8 * i)) & 0xFF) / (float) al;
+                    q[i] = b[i] / b[3];
+                }
+                float dl = amount * (luma(p) - luma(q));
+                for (int i = 0; i < 3; i++) p[i] += dl;
+                into_gamut(p);
+                uint32_t o = al << 24;
+                for (int i = 0; i < 3; i++) o |= (uint32_t) (p[i] * (float) al + 0.5f) << (8 * i);
+                d[x] = o;
+            }
+        }
+    }
+    free(rows);
+    unlock_px(env, src, sp, out, op, err);
+}
+
+/* Streaked's src: px (along, across) of a line, clamped into src */
+typedef struct {
+    const uint8_t* px;
+    size_t along, across; /* bytes a px */
+    int w, h, p0, pa, sa;  /* w along, h across */
+    const jint* r;         /* r[i]: the line's offset across at p0 + i */
+} Line;
+
+static inline const uint8_t* line_px(const Line* l, int i, int j) {
+    int p = l->p0 + i - l->pa, s = j + l->r[i] - l->sa;
+    p = p < 0 ? 0 : p >= l->w ? l->w - 1 : p;
+    s = s < 0 ? 0 : s >= l->h ? l->h - 1 : s;
+    return l->px + (size_t) p * l->along + (size_t) s * l->across;
+}
+
+/* Streaked.into (Effect.kt): out's px (p, s) — x, y along x, else y, x — from (p0, s0), each the box average of src's px (p + k, s + r(p + k) − r(p)) for |k| ≤ n,
+those at |k| = n + 1 weighing edge / 256: its digital line, nothing resampled. Walked by lines j = s − r(p): a running sum. r — r(i) from p0 − n − 1. src — rendered
+from (pa, sa), its px clamped: the raster's edge repeated */
+JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_streak(JNIEnv* env, jobject thiz, jobject src, jobject out, jboolean along_x, jint pa, jint sa,
+    jint p0, jint s0, jint n, jint edge, jintArray r) {
+    AndroidBitmapInfo si, oi;
+    void* sp = lock_px(env, src, &si);
+    void* op = sp ? lock_px(env, out, &oi) : NULL;
+    int lp = 0, ls = 0;
+    if (op) {
+        lp = (int) (along_x ? oi.width : oi.height);
+        ls = (int) (along_x ? oi.height : oi.width);
+    }
+    const char* err = !sp ? "Can't read the bitmap" : !op ? "Can't write the bitmap" : n < 0 || edge < 0 || edge > 256 || !si.width || !si.height
+        || (*env)->GetArrayLength(env, r) < lp + 2 * n + 2 ? "Bad streak" : NULL;
+    jint* rr = !err ? HOLD(r) : NULL;
+    if (rr) {
+        Line l = { sp, along_x ? 4 : si.stride, along_x ? si.stride : 4, (int) (along_x ? si.width : si.height), (int) (along_x ? si.height : si.width),
+                   p0, pa, sa, rr + n + 1 };
+        uint8_t* o8 = op;
+        size_t oa = along_x ? 4 : oi.stride, oc = along_x ? oi.stride : 4;
+        int lo = l.r[0], hi = l.r[0];
+        for (int i = 1; i < lp; i++) {
+            if (l.r[i] < lo) lo = l.r[i];
+            if (l.r[i] > hi) hi = l.r[i];
+        }
+        uint32_t total = 256u * (uint32_t) (2 * n + 1) + 2u * (uint32_t) edge, w = (uint32_t) edge;
+        for (int j = s0 - hi; j <= s0 + ls - 1 - lo; j++) {
+            uint32_t a[4] = { 0 };
+            for (int i = -n; i < n; i++) {
+                const uint8_t* q = line_px(&l, i, j);
+                for (int c = 0; c < 4; c++) a[c] += q[c];
+            }
+            for (int i = 0; i < lp; i++) {
+                const uint8_t* q = line_px(&l, i + n, j);
+                for (int c = 0; c < 4; c++) a[c] += q[c];
+                int s = j + l.r[i];
+                if (s >= s0 && s < s0 + ls) {
+                    uint32_t e[4] = { 0 };
+                    if (w) {
+                        const uint8_t* u = line_px(&l, i - n - 1, j);
+                        const uint8_t* v = line_px(&l, i + n + 1, j);
+                        for (int c = 0; c < 4; c++) e[c] = (uint32_t) u[c] + v[c];
+                    }
+                    uint8_t* d = o8 + (size_t) i * oa + (size_t) (s - s0) * oc;
+                    for (int c = 0; c < 4; c++) d[c] = (uint8_t) ((256u * a[c] + w * e[c] + total / 2) / total);
+                }
+                q = line_px(&l, i - n, j);
+                for (int c = 0; c < 4; c++) a[c] -= q[c];
+            }
+        }
+    }
+    FREE(r, rr, JNI_ABORT);
+    unlock_px(env, src, sp, out, op, err);
 }
