@@ -8,7 +8,7 @@ import com.perkus.imagoedit.ui.common.MenuBtn
 
 enum class EditAction(override val icon: ImageVector, override val title: Int) : ToolStyle {
     Cut(AppIcons.Scissors, R.string.cut), Copy(AppIcons.Copy, R.string.copy), CopyMerged(AppIcons.CopyFromAllLayers, R.string.copy_merged),
-    Paste(AppIcons.Insert, R.string.paste), Clear(AppIcons.Clear, R.string.clear), Extract(AppIcons.Extract, R.string.extract)
+    Paste(AppIcons.Insert, R.string.paste), Clear(AppIcons.Clear, R.string.clear), Extract(AppIcons.Extract, R.string.extract), Cursor(AppIcons.MousePointer, R.string.show_cursor)
 }
 
 enum class SelectAction(override val icon: ImageVector, override val title: Int) : ToolStyle {
@@ -21,7 +21,8 @@ enum class Tools3Action(override val icon: ImageVector, override val title: Int)
     FillStroke(AppIcons.PaintBucket, R.string.fill_stroke), Text(AppIcons.Text, R.string.text), Transition(AppIcons.Opacity, R.string.transition)
 }
 
-/** One-shot actions; inactive unless [enabled]. The open menu keeps its lambdas: they must read state, not the opener's values */
+/** One-shot actions; inactive unless [enabled], marked while [selected] (a mode on). The open menu keeps its lambdas: they must read state, not the opener's values */
 @Composable
-fun <A : ToolStyle> ActionMenuBtn(kind: ToolPopup, icon: ImageVector, actions: List<A>, open: ToolPopup?, enabled: (A) -> Boolean = { false }, onAction: (A) -> Unit = {}, onOpen: (OpenPopup) -> Unit) =
-    MenuBtn(icon, open == kind) { onOpen(OpenPopup(kind, it) { actions.forEach { a -> MenuItem(a, enabled = enabled(a), indication = null) { onAction(a) } } }) }
+fun <A : ToolStyle> ActionMenuBtn(kind: ToolPopup, icon: ImageVector, actions: List<A>, open: ToolPopup?, enabled: (A) -> Boolean = { false }, onAction: (A) -> Unit = {},
+    selected: (A) -> Boolean = { false }, onOpen: (OpenPopup) -> Unit) =
+    MenuBtn(icon, open == kind) { onOpen(OpenPopup(kind, it) { actions.forEach { a -> MenuItem(a, selected(a), enabled(a), null) { onAction(a) } } }) }

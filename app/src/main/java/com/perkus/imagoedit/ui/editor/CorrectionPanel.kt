@@ -465,7 +465,7 @@ fun <T : CarouselItem> TileCarousel(shown: Boolean, tiles: List<T>, modifier: Mo
     if (shown && images == null) LaunchedEffect(Unit) { images = withContext(Dispatchers.IO) { tiles.map { ImageBitmap.imageResource(res, it.image) } } }
     AnimatedVisibility(shown, modifier, PANEL_IN, PANEL_OUT) {
         // Its scrolling takes the presses: they don't reach the press-outside layer under it
-        LazyRow(Modifier.fillMaxWidth().height(CAROUSEL_H).background(BarBg), scroll, PaddingValues(GAP), horizontalArrangement = Arrangement.spacedBy(GAP),
+        LazyRow(Modifier.toolPanel().fillMaxWidth().height(CAROUSEL_H).background(BarBg), scroll, PaddingValues(GAP), horizontalArrangement = Arrangement.spacedBy(GAP),
             overscrollEffect = null) {
             itemsIndexed(tiles) { i, t -> CarouselTile(t.title, images?.get(i)) { onPick(t) } }
         }

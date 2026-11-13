@@ -66,20 +66,21 @@ private fun valid(len: Int, n: Int, start: Int) = minOf(TILE, ((len + (1 shl n) 
 
 private val Bitmap.bpp get() = if (config == Bitmap.Config.ALPHA_8) 1 else 4
 
+/** Its [unit] B at [at] repeated over [len] B from there */
+internal fun ByteArray.spread(at: Int, unit: Int, len: Int) {
+    var done = unit
+    while (done < len) {
+        val n = minOf(done, len - done)
+        System.arraycopy(this, at, this, at + done, n)
+        done += n
+    }
+}
+
 /** Past the layer's edge ([vw]×[vh]) the edge px repeat: filtered sampling sees the edge, as a clamped texture */
 internal fun ByteArray.clampPad(vw: Int, vh: Int, bpp: Int) {
     val row = TILE * bpp
     val pad = (TILE - vw) * bpp
-    if (pad > 0) for (y in 0 until vh) {
-        val at = y * row + vw * bpp
-        System.arraycopy(this, at - bpp, this, at, bpp)
-        var done = bpp
-        while (done < pad) {
-            val n = minOf(done, pad - done)
-            System.arraycopy(this, at, this, at + done, n)
-            done += n
-        }
-    }
+    if (pad > 0) for (y in 0 until vh) spread(y * row + (vw - 1) * bpp, bpp, pad + bpp)
     for (y in vh until TILE) System.arraycopy(this, (vh - 1) * row, this, y * row, row)
 }
 
@@ -89,6 +90,61 @@ internal fun Bitmap.clampPad(vw: Int, vh: Int, raw: ByteArray) {
     copyPixelsToBuffer(ByteBuffer.wrap(raw))
     raw.clampPad(vw, vh, bpp)
     copyPixelsFromBuffer(ByteBuffer.wrap(raw))
+}
+
+/** A [w]×[h] raster of premultiplied RGBA bytes in TILE tiles of [like]'s kind, each drawn by [render] (from raster px; the calling thread's) on first use;
+[origins] — each also kept as drawn */
+internal class Rendered(private val w: Int, private val h: Int, private val like: Bitmap?, origins: Boolean, private val render: (Bitmap, Int, Int) -> Unit) {
+    val cols = (w + TILE - 1) / TILE
+    private val tiles = arrayOfNulls<ByteArray>(cols * ((h + TILE - 1) / TILE))
+    private val origin = if (origins) arrayOfNulls<ByteArray>(tiles.size) else null
+    val dirty = BooleanArray(tiles.size) // written back
+    private var scratch: Bitmap? = null
+
+    /** Reads a [bw]×[bh] block at ([ox], [oy]) into [buf], edge px repeated past the raster ([drawn] — as first drawn, if kept), or writes it back ([back], inside only) */
+    fun copy(ox: Int, oy: Int, bw: Int, bh: Int, buf: ByteArray, back: Boolean, drawn: Boolean = false) {
+        val of = if (drawn) origin ?: tiles else tiles
+        for (j in 0 until bh) {
+            val y = oy + j
+            if (back && y !in 0 until h) continue
+            val ty = y.coerceIn(0, h - 1)
+            var i = 0
+            while (i < bw) {
+                val x = ox + i
+                val inside = x in 0 until w
+                val cx = x.coerceIn(0, w - 1)
+                val run = if (inside) minOf(bw - i, w - x, TILE - x % TILE) else if (x < 0) minOf(bw - i, -x) else bw - i
+                if (inside || !back) {
+                    val k = ty / TILE * cols + cx / TILE
+                    val at = 4 * (ty % TILE * TILE + cx % TILE)
+                    val o = 4 * (j * bw + i)
+                    tile(k)
+                    when {
+                        back -> { System.arraycopy(buf, o, tiles[k]!!, at, 4 * run); dirty[k] = true }
+                        inside -> System.arraycopy(of[k]!!, at, buf, o, 4 * run)
+                        else -> { System.arraycopy(of[k]!!, at, buf, o, 4); buf.spread(o, 4, 4 * run) }
+                    }
+                }
+                i += run
+            }
+        }
+    }
+
+    private fun tile(k: Int) = tiles[k] ?: ByteArray(4 * TILE * TILE).also { t ->
+        val b = scratch ?: patchTile(like).also { scratch = it }
+        render(b, k % cols * TILE, k / cols * TILE)
+        b.copyPixelsToBuffer(ByteBuffer.wrap(t))
+        tiles[k] = t
+        origin?.set(k, t.copyOf())
+    }
+
+    /** Draws every tile holding raster px [r], clamped into the raster */
+    fun make(r: Rect) {
+        for (ty in r.top.coerceIn(0, h - 1) / TILE..(r.bottom - 1).coerceIn(0, h - 1) / TILE)
+            for (tx in r.left.coerceIn(0, w - 1) / TILE..(r.right - 1).coerceIn(0, w - 1) / TILE) tile(ty * cols + tx)
+    }
+
+    fun recycle() { scratch?.recycle() }
 }
 
 /** Immutable raster of ALPHA_8 or ARGB_8888 tiles: [levels][0] row by row, each next level 2× smaller; a missing tile — empty.

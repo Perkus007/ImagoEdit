@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -92,6 +93,8 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     // A press that closes a popover only closes it. A new canvas size — a new tool
     val select = remember(project.width, project.height) { SelectTool(options.selection, project.width, project.height, { popup == null && layerMenu == null }, vm::select, vm::wand) }
     val brush = remember { BrushTool(options, { popup == null && layerMenu == null }, vm::stroke) }
+    val cursor = remember { CanvasCursor() }
+    var pointing by remember { mutableStateOf(false) } // the cursor shown
 
     val target = project.active // in history
 
@@ -141,9 +144,10 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     val targetBitmap = layers.getOrNull(target)
     val targetMask = targetLayer?.let(vm::mask)
     val targetPatch = targetLayer?.let(vm::patch)
+    val current = tool.value // read in this scope: a tool change reruns the SideEffect
     SideEffect {
-        brush.aim(if (tool.value == Tool.Selection) Layer(w = project.width, h = project.height, id = 0) else targetLayer?.paintable(project.width, project.height), project.selection, tool.value,
-            targetBitmap?.asAndroidBitmap(), targetMask, targetPatch, project.width, project.height)
+        brush.aim(targetLayer?.paintable(project.width, project.height), project.selection, current, targetBitmap?.asAndroidBitmap(), targetMask, targetPatch,
+            vm.edgePx(target), project.width, project.height)
     }
 
     // Precomputed off the main thread: usually ready when Move or "Select pixels" is tapped
@@ -242,6 +246,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
         EditAction.CopyMerged -> vm.canCopyMerged
         EditAction.Paste -> vm.canPaste
         EditAction.Extract -> vm.canCopy(target) && vm.selection != null
+        EditAction.Cursor -> true
     }
 
     fun edit(a: EditAction) {
@@ -253,6 +258,7 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
             EditAction.Paste -> vm.paste(target)
             EditAction.Clear -> vm.clear(target)
             EditAction.Extract -> vm.extract(target)
+            EditAction.Cursor -> pointing = !pointing
         }
     }
 
@@ -305,108 +311,110 @@ fun EditorScreen(vm: AppViewModel, project: Project) {
     BackHandler(layerMenu != null) { closeLayerMenu() }
     BackHandler(popup != null) { popup = null }
 
-    Box(Modifier.fillMaxSize()) {
-        // The canvas is always fullscreen under the panels: zoom and position survive tools
-        val frame: CanvasTool<*>? = move ?: crop ?: text ?: transform ?: transition
-        val hidden = frame != null || fill != null || correction != null || effects // a tool with its own panel
-        val selecting = tool.value == Tool.Selection && !hidden
-        // A tap with the effects' carousel shown closes it; an effect's panel has its own Cancel. None while a popover is open: a press closing it only closes it
-        val closeEffects = { effects = false }
-        val tap = (correction?.let { s -> { tapCorrections(s) } } ?: closeEffects.takeIf { effects && effect == null }).takeIf { popup == null }
-        CanvasView(picture, frame, select.takeIf { selecting },
-            brush.takeIf { tool.value != Tool.Selection && !hidden || selecting && options.selection.style.value == SelectStyle.Brush },
-            project.selection, targetLayer?.id ?: 0L, fill, correction ?: effect, tap, Modifier.fillMaxSize())
-        // An unfinished polygon disappears with its style or tool
-        if (selecting && options.selection.style.value == SelectStyle.Polygon) DisposableEffect(Unit) { onDispose(select::dropPolygon) }
-        transform?.let { s -> LaunchedEffect(s) { s.preview() } }
-        val m = move
-        // Panels stay composed and slide away: the layer list isn't rebuilt
-        val slide = animateFloatAsState(if (hidden) 1f else 0f, PANEL_ANIM, label = "panels")
-        Column(Modifier.fillMaxSize().clipToBounds()) {
-            Bar(Modifier.panel(slide, hidden, dy = -1)) {
-                IconBtn(AppIcons.Back) { requestExit() }
-                IconBtn(AppIcons.AddImage, onClick = pickImage)
-                ActionMenuBtn(ToolPopup.Edit, AppIcons.CutSquare, EditAction.entries, popup?.kind, ::canEdit, ::edit) { popup = it }
-                ActionMenuBtn(ToolPopup.Selection, AppIcons.DottedLine, SelectAction.entries, popup?.kind, ::canSelect, ::selectAction) { popup = it }
-                Spacer(Modifier.weight(1f))
-                IconBtn(AppIcons.SlidersHorizontal) { openCorrections() }
-                IconBtn(AppIcons.SquareSparkles) { effects = true }
-                ActionMenuBtn(ToolPopup.Tools3, AppIcons.Menu, Tools3Action.entries, popup?.kind, ::canTools3, ::tools3Action) { popup = it }
-                IconBtn(AppIcons.Move) {
-                    if (targetLayer?.hasImage == true && (project.selection != null || box != null)) {
-                        if (!project.layers[target].visible) vm.toggleVisible(target)
-                        // With a selection only its part moves: cut out first (vm.moveSelection)
-                        if (project.selection != null) vm.moveSelection(target, ::moveLayer) else moveLayer()
+    CompositionLocalProvider(LocalCursor provides cursor) {
+        Box(Modifier.fillMaxSize()) {
+            // The canvas is always fullscreen under the panels: zoom and position survive tools
+            val frame: CanvasTool<*>? = move ?: crop ?: text ?: transform ?: transition
+            val hidden = frame != null || fill != null || correction != null || effects // a tool with its own panel
+            val selecting = tool.value == Tool.Selection && !hidden
+            // A tap with the effects' carousel shown closes it; an effect's panel has its own Cancel. None while a popover is open: a press closing it only closes it
+            val closeEffects = { effects = false }
+            val tap = (correction?.let { s -> { tapCorrections(s) } } ?: closeEffects.takeIf { effects && effect == null }).takeIf { popup == null }
+            CanvasView(picture, frame, select.takeIf { selecting },
+                brush.takeIf { tool.value != Tool.Selection && !hidden || selecting && options.selection.style.value == SelectStyle.Brush },
+                project.selection, targetLayer?.id ?: 0L, fill, correction ?: effect, tap, cursor.takeIf { pointing && correction == null && !effects }, !hidden, Modifier.fillMaxSize())
+            // An unfinished polygon disappears with its style or tool
+            if (selecting && options.selection.style.value == SelectStyle.Polygon) DisposableEffect(Unit) { onDispose(select::dropPolygon) }
+            transform?.let { s -> LaunchedEffect(s) { s.preview() } }
+            val m = move
+            // Panels stay composed and slide away: the layer list isn't rebuilt
+            val slide = animateFloatAsState(if (hidden) 1f else 0f, PANEL_ANIM, label = "panels")
+            Column(Modifier.fillMaxSize().clipToBounds()) {
+                Bar(Modifier.panel(slide, hidden, dy = -1)) {
+                    IconBtn(AppIcons.Back) { requestExit() }
+                    IconBtn(AppIcons.AddImage, onClick = pickImage)
+                    ActionMenuBtn(ToolPopup.Edit, AppIcons.CutSquare, EditAction.entries, popup?.kind, ::canEdit, ::edit, { it == EditAction.Cursor && pointing }) { popup = it }
+                    ActionMenuBtn(ToolPopup.Selection, AppIcons.DottedLine, SelectAction.entries, popup?.kind, ::canSelect, ::selectAction) { popup = it }
+                    Spacer(Modifier.weight(1f))
+                    IconBtn(AppIcons.SlidersHorizontal) { openCorrections() }
+                    IconBtn(AppIcons.SquareSparkles) { effects = true }
+                    ActionMenuBtn(ToolPopup.Tools3, AppIcons.Menu, Tools3Action.entries, popup?.kind, ::canTools3, ::tools3Action) { popup = it }
+                    IconBtn(AppIcons.Move) {
+                        if (targetLayer?.hasImage == true && (project.selection != null || box != null)) {
+                            if (!project.layers[target].visible) vm.toggleVisible(target)
+                            // With a selection only its part moves: cut out first (vm.moveSelection)
+                            if (project.selection != null) vm.moveSelection(target, ::moveLayer) else moveLayer()
+                        }
                     }
                 }
-            }
-            Row(Modifier.weight(1f).fillMaxWidth()) {
-                SideBar(Modifier.panel(slide, hidden, dx = -1)) {
-                    ToolsPanel(tool, options, picture, select, popup?.kind, { popup = it }, Modifier.weight(1f))
-                    Bar(arrangement = Arrangement.Center) {
-                        IconBtn(AppIcons.StepBack, vm.canUndo) { Feedback.tap(); vm.undo() }
-                        IconBtn(AppIcons.StepForward, vm.canRedo) { Feedback.tap(); vm.redo() }
+                Row(Modifier.weight(1f).fillMaxWidth()) {
+                    SideBar(Modifier.panel(slide, hidden, dx = -1)) {
+                        ToolsPanel(tool, options, picture, select, popup?.kind, { popup = it }, Modifier.weight(1f))
+                        Bar(arrangement = Arrangement.Center) {
+                            IconBtn(AppIcons.StepBack, vm.canUndo) { Feedback.tap(); vm.undo() }
+                            IconBtn(AppIcons.StepForward, vm.canRedo) { Feedback.tap(); vm.redo() }
+                        }
                     }
+                    Spacer(Modifier.weight(1f))
+                    LayersPanel(
+                        project, layers, vm::mask, vm::patch, levels, target, layersScroll, menuOpen = layerMenu != null,
+                        onSelect = vm::setActive,
+                        onToggleVisible = vm::toggleVisible,
+                        onMove = vm::moveLayer,
+                        onAdd = { dialog = EditorDialog.AddLayer },
+                        onMenu = { layerMenu = it },
+                        modifier = Modifier.panel(slide, hidden, dx = 1)
+                    )
                 }
-                Spacer(Modifier.weight(1f))
-                LayersPanel(
-                    project, layers, vm::mask, vm::patch, levels, target, layersScroll, menuOpen = layerMenu != null,
-                    onSelect = vm::setActive,
-                    onToggleVisible = vm::toggleVisible,
-                    onMove = vm::moveLayer,
-                    onAdd = { dialog = EditorDialog.AddLayer },
-                    onMenu = { layerMenu = it },
-                    modifier = Modifier.panel(slide, hidden, dx = 1)
-                )
             }
-        }
-        if (m != null) MoveOverlay(m, onCancel = { cancelMove() }) {
-            // Open under the indicator until the ViewModel applies it; an unchanged cut is undone
-            if (m.changed || (pending != null && pending.cut == null)) {
-                vm.applyTransform(m.layer, m.t, m.opacity) { move = null }
-            } else cancelMove()
-        }
-        // Likewise until the canvas is cropped
-        crop?.let { c ->
-            FramePanel(c, Modifier.align(Alignment.BottomCenter), onCancel = { crop = null }) {
-                if (c.changed) vm.cropCanvas(c.rect) { crop = null } else crop = null
+            if (m != null) MoveOverlay(m, onCancel = { cancelMove() }) {
+                // Open under the indicator until the ViewModel applies it; an unchanged cut is undone
+                if (m.changed || (pending != null && pending.cut == null)) {
+                    vm.applyTransform(m.layer, m.t, m.opacity) { move = null }
+                } else cancelMove()
             }
-        }
-        // Likewise until the layer is added; a blank text adds nothing
-        text?.let { s ->
-            TextOverlay(s, picture, popup?.kind, { popup = it }, ::closeText) {
-                if (s.empty) closeText() else vm.addText(s.layer, s.content::layout, s.color.toArgb(), s.t, s.opacity, ::closeText)
+            // Likewise until the canvas is cropped
+            crop?.let { c ->
+                FramePanel(c, Modifier.align(Alignment.BottomCenter), onCancel = { crop = null }) {
+                    if (c.changed) vm.cropCanvas(c.rect) { crop = null } else crop = null
+                }
             }
-        }
-        // Likewise until the selection is replaced; nothing changed — no step
-        transform?.let { s ->
-            TransformOverlay(s, ::closeTransform) {
-                options.transform.edge = s.edge
-                if (s.changed) s.edge.let { e -> vm.transformSelection(e.grow, e.blur, e.smooth, s.src, s.t, ::closeTransform) } else closeTransform()
+            // Likewise until the layer is added; a blank text adds nothing
+            text?.let { s ->
+                TextOverlay(s, picture, popup?.kind, { popup = it }, ::closeText) {
+                    if (s.empty) closeText() else vm.addText(s.layer, s.content::layout, s.color.toArgb(), s.t, s.opacity, ::closeText)
+                }
             }
-        }
-        // Likewise until baked as a brush stroke
-        fill?.let { s -> FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) { bake(s.stroke()) { fill = null } } }
-        transition?.let { s -> TransitionOverlay(s, { popup = it }, { transition = null }) { bake(s.stroke()) { transition = null } } }
-        // A tile's panel takes the carousel's place, closed by a tap on the canvas: zoom stays available; a tap with the carousel shown bakes, open under the
-        // indicator until then
-        TileCarousel(correction.let { it != null && it.open == null }, Correction.entries, Modifier.align(Alignment.BottomCenter), ::openCorrection)
-        correction?.let { CorrectionOverlay(it, picture, popup?.kind) { p -> popup = p } }
-        // One effect at a time: ✓ bakes it (open under the indicator until then), ✓ and Cancel bring the carousel back
-        TileCarousel(effects && effect == null, Effect.entries, Modifier.align(Alignment.BottomCenter), ::openEffect)
-        when (val s = effect) {
-            is EffectTool -> EffectOverlay(s, picture, popup?.kind, { popup = it }, { effect = null }) { bake(s.stroke()) { effect = null } }
-            is CorrectionTool -> ReplaceOverlay(s, options.correction, picture, popup?.kind, { popup = it }, { effect = null }) { bake(s.stroke()) { effect = null } }
-        }
-        // Popovers' press-outside layer, permanent (see dismissOnPress)
-        Box(Modifier.fillMaxSize().dismissOnPress { closeLayerMenu(); popup = null })
-        layerMenu?.let { anchor ->
-            LayerMenu(anchor, project.layers[target], project.layers.size > 1 || project.layers[target].hasImage, preview, { vm.setOpacity(target, it) },
-                { vm.deleteLayer(target) }, { layerMenu = null; dialog = EditorDialog.Merge }, ::closeLayerMenu)
-        }
-        ToolPopover(popup) { popup = null }
+            // Likewise until the selection is replaced; nothing changed — no step
+            transform?.let { s ->
+                TransformOverlay(s, ::closeTransform) {
+                    options.transform.edge = s.edge
+                    if (s.changed) s.edge.let { e -> vm.transformSelection(e.grow, e.blur, e.smooth, s.src, s.t, ::closeTransform) } else closeTransform()
+                }
+            }
+            // Likewise until baked as a brush stroke
+            fill?.let { s -> FillOverlay(s, picture, popup?.kind, { popup = it }, { fill = null }) { bake(s.stroke()) { fill = null } } }
+            transition?.let { s -> TransitionOverlay(s, { popup = it }, { transition = null }) { bake(s.stroke()) { transition = null } } }
+            // A tile's panel takes the carousel's place, closed by a tap on the canvas: zoom stays available; a tap with the carousel shown bakes, open under the
+            // indicator until then
+            TileCarousel(correction.let { it != null && it.open == null }, Correction.entries, Modifier.align(Alignment.BottomCenter), ::openCorrection)
+            correction?.let { CorrectionOverlay(it, picture, popup?.kind) { p -> popup = p } }
+            // One effect at a time: ✓ bakes it (open under the indicator until then), ✓ and Cancel bring the carousel back
+            TileCarousel(effects && effect == null, Effect.entries, Modifier.align(Alignment.BottomCenter), ::openEffect)
+            when (val s = effect) {
+                is EffectTool -> EffectOverlay(s, picture, popup?.kind, { popup = it }, { effect = null }) { bake(s.stroke()) { effect = null } }
+                is CorrectionTool -> ReplaceOverlay(s, options.correction, picture, popup?.kind, { popup = it }, { effect = null }) { bake(s.stroke()) { effect = null } }
+            }
+            // Popovers' press-outside layer, permanent (see dismissOnPress)
+            Box(Modifier.fillMaxSize().dismissOnPress { closeLayerMenu(); popup = null })
+            layerMenu?.let { anchor ->
+                LayerMenu(anchor, project.layers[target], project.layers.size > 1 || project.layers[target].hasImage, preview, { vm.setOpacity(target, it) },
+                    { vm.deleteLayer(target) }, { layerMenu = null; dialog = EditorDialog.Merge }, ::closeLayerMenu)
+            }
+            ToolPopover(popup) { popup = null }
 
-        if (busy || applying) BusyOverlay()
+            if (busy || applying) BusyOverlay()
+        }
     }
 
     dialog?.let { d ->

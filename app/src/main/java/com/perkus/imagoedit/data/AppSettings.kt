@@ -60,7 +60,7 @@ class BoolOption(private val settings: AppSettings, private val key: String, def
 }
 
 @Stable
-class IntOption(private val settings: AppSettings, private val key: String, val range: IntRange, default: Int) {
+class IntOption(private val settings: AppSettings, private val key: String, val range: IntRange, val default: Int) {
     private val state = mutableIntStateOf(settings.int(key, default).coerceIn(range))
     var value: Int
         get() = state.intValue

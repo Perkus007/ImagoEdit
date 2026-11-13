@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.isSpecified
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -42,14 +43,22 @@ import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.rememberVectorPainter
 import androidx.compose.ui.graphics.withSaveLayer
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.ui.input.pointer.HistoricalChange
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToDownIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.toOffset
+import androidx.compose.ui.unit.toSize
 import com.perkus.imagoedit.data.Blend
 import com.perkus.imagoedit.data.LayerOverlay
 import com.perkus.imagoedit.data.Selection
@@ -58,6 +67,7 @@ import com.perkus.imagoedit.data.alphaAt
 import com.perkus.imagoedit.data.fileH
 import com.perkus.imagoedit.data.fileToCanvas
 import com.perkus.imagoedit.data.fileW
+import com.perkus.imagoedit.ui.common.AppIcons
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.SIDEBAR_W
 import com.perkus.imagoedit.ui.common.drawChecker
@@ -219,10 +229,11 @@ interface SelectionPreview {
 
 /** [tool] — Move, Text, Crop, Selection transform or Transition while open; [select], [brush] — the active tool's gesture (both for the Selection brush); [selection] — drawn always,
 as a SelectionPreview [tool] makes it; [active] — Layer.id, 0 — none; [fill] — the Fill/Stroke tool while open; [overlay] — the carousel's corrections or the open
-effect; [onTap] — a one-finger touch that didn't move */
+effect; [onTap] — a one-finger touch that didn't move; [cursor] — the virtual cursor while on: a finger holds it instead of touching, its press is such a touch;
+[bars] — the editor's bars and side panels shown */
 @Composable
 fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?, brush: BrushTool?, selection: Selection?, active: Long, fill: FillTool?, overlay: LayerOverlay?,
-    onTap: (() -> Unit)?, modifier: Modifier = Modifier) {
+    onTap: (() -> Unit)?, cursor: CanvasCursor?, bars: Boolean, modifier: Modifier = Modifier) {
     val density = LocalDensity.current
     val margin = with(density) { 24.dp.toPx() }
     // Bars overlay the canvas: fit is for the area between them
@@ -245,53 +256,108 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
     val move = tool as? PlaceState<*>
     val preview = tool as? SelectionPreview
     val hot = move?.id ?: active // moved layer or text, else the active one
+    val grabIcon = rememberVectorPainter(AppIcons.HandGrab)
+    val clickIcon = rememberVectorPainter(AppIcons.MousePointerClick)
+
+    fun CanvasCursor.aim(p: Offset, view: Size) = spots(p, view, bars, brush?.takeUnless { it.picks }?.radius(density.density) ?: 0f, density)
 
     Box(
         modifier
             .onSizeChanged { s -> vp.fitInto(Rect(sideW, topH, s.width - sideW, s.height.toFloat()), margin, picture.canvasW, picture.canvasH) }
-            .pointerInput(tool, select, brush, onTap) {
+            .pointerInput(tool, select, brush, onTap, cursor, bars) {
                 val slop = viewConfiguration.touchSlop
+                val hit = CURSOR_HIT.toPx()
                 var lastTap = 0L // a lone tap's release, uptime ms; 0 — none to pair with
+                fun press(p: Offset) = Press(p, vp, tool, select, brush, committed.value, this, slop)
+
+                /** A pinch discards [t]; one that didn't move is a tap, the second of a quick pair — the tool's double tap */
+                fun release(t: Press, pinched: Boolean, downAt: Long, upAt: Long) {
+                    if (!pinched) t.finish()
+                    val paired = downAt - lastTap <= viewConfiguration.doubleTapTimeoutMillis
+                    lastTap = 0L
+                    if (!pinched && !t.moving) if (paired && tool != null) tool.doubleTap() else { onTap?.invoke(); lastTap = upAt }
+                }
+
+                fun pinch(e: PointerEvent) {
+                    vp.pinch(e.calculateZoom(), e.calculateCentroid(), e.calculatePan())
+                    e.changes.forEach { it.consume() }
+                }
+
+                /** Till all fingers lift */
+                suspend fun AwaitPointerEventScope.zoom() {
+                    try {
+                        do {
+                            val e = awaitPointerEvent()
+                            if (e.changes.count { it.pressed } >= 2) pinch(e) else vp.zoomPct = 0
+                        } while (e.changes.any { it.pressed })
+                    } finally { vp.zoomPct = 0 }
+                }
+
+                /** The finger [down] holds the cursor's handle once past touchSlop (a second finger before that zooms); then a second finger on the click button presses
+                at the cursor till either lifts, elsewhere — zooms */
+                suspend fun AwaitPointerEventScope.steer(c: CanvasCursor, down: PointerInputChange) {
+                    val view = size.toSize()
+                    val place = { p: Offset -> c.aim(p, view).spot }
+                    var t: Press? = null
+                    var by = down.id // the press's finger
+                    var downAt = 0L
+                    var shown = false
+                    try {
+                        while (true) {
+                            val e = awaitPointerEvent()
+                            val hand = e.changes.firstOrNull { it.id == down.id }?.takeIf { it.pressed } ?: break
+                            if (!shown) {
+                                if (e.changes.any { it.changedToDownIgnoreConsumed() }) return zoom()
+                                if ((hand.position - down.position).getDistance() <= slop) continue
+                                shown = true
+                            }
+                            c.at = hand.position
+                            val p = t
+                            if (p != null) {
+                                val f = e.changes.firstOrNull { it.id == by }
+                                if (f != null && f.pressed) p.move(hand.position, hand.historical, place)
+                                else { release(p, false, downAt, f?.uptimeMillis ?: hand.uptimeMillis); p.end(); t = null }
+                            } else e.changes.firstOrNull { it.changedToDownIgnoreConsumed() }?.let { f ->
+                                if ((f.position - c.aim(hand.position, view).click).getDistance() > hit) {
+                                    c.at = Offset.Unspecified
+                                    return zoom()
+                                }
+                                t = press(place(hand.position))
+                                by = f.id
+                                downAt = f.uptimeMillis
+                            }
+                            e.changes.forEach { it.consume() }
+                        }
+                        t?.let { release(it, false, downAt, currentEvent.changes[0].uptimeMillis) } // the handle let go first: the press ends with it
+                    } finally {
+                        t?.end()
+                        c.at = Offset.Unspecified
+                    }
+                }
+
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
-                    tool?.begin(down.position - vp.offset, vp.scale, this)
-                    select?.begin((down.position - vp.offset) / vp.scale, committed.value, CLOSE_REACH.toPx() / vp.scale)
-                    val painting = brush?.takeUnless { select?.moves == true } // the Selection brush doesn't paint a touch that moves the selection
-                    painting?.begin(down.position, vp.offset, vp.scale, density.density)
+                    if (cursor != null) {
+                        steer(cursor, down)
+                        return@awaitEachGesture
+                    }
+                    val t = press(down.position)
                     var multi = false // after a second finger single-finger input is ignored
-                    var moving = false // past touchSlop: a pinch start won't move things
                     try {
                         do {
                             val e = awaitPointerEvent()
                             if (e.changes.count { it.pressed } >= 2) {
-                                if (!multi) { select?.cancel(); painting?.cancel() } // the discarded gesture vanishes as the pinch starts
+                                if (!multi) t.cancel() // the discarded gesture vanishes as the pinch starts
                                 multi = true
-                                vp.pinch(e.calculateZoom(), e.calculateCentroid(), e.calculatePan())
-                                e.changes.forEach { it.consume() }
+                                pinch(e)
                             } else {
                                 vp.zoomPct = 0
-                                if (!multi) {
-                                    val c = e.changes.firstOrNull { it.id == down.id }
-                                    if (c != null && c.pressed) {
-                                        if (!moving && (c.position - down.position).getDistance() > slop) moving = true
-                                        if (moving && (tool != null || select != null || painting != null)) {
-                                            if (painting != null) {
-                                                // Historical points too: a fast stroke keeps its curves
-                                                val past = c.historical
-                                                for (h in past.indices) painting.drag(past[h].position)
-                                                painting.drag(c.position)
-                                            }
-                                            tool?.drag(c.position - vp.offset); select?.drag((c.position - vp.offset) / vp.scale); c.consume()
-                                        }
-                                    }
-                                }
+                                val c = e.changes.firstOrNull { it.id == down.id }
+                                if (!multi && c != null && c.pressed && t.move(c.position, c.historical)) c.consume()
                             }
                         } while (e.changes.any { it.pressed })
-                        if (!multi) { select?.finish(tap = !moving); painting?.finish() } // a pinch discards the gesture
-                        val paired = down.uptimeMillis - lastTap <= viewConfiguration.doubleTapTimeoutMillis
-                        lastTap = 0L
-                        if (!multi && !moving) if (paired && tool != null) tool.doubleTap() else { onTap?.invoke(); lastTap = currentEvent.changes[0].uptimeMillis }
-                    } finally { vp.zoomPct = 0; tool?.finish(); select?.cancel(); painting?.cancel() } // also on cancellation; the tool's history step once per gesture
+                        release(t, multi, down.uptimeMillis, currentEvent.changes[0].uptimeMillis)
+                    } finally { vp.zoomPct = 0; t.end() } // also on cancellation; the tool's history step once per gesture
                 }
             }
             .clipToBounds()
@@ -330,10 +396,46 @@ fun CanvasView(picture: CanvasPicture, tool: CanvasTool<*>?, select: SelectTool?
                 drawCircle(Color.Black, ring, c, style = Stroke(3.dp.toPx()))
                 drawCircle(Color.White, ring, c, style = Stroke(1.5.dp.toPx()))
             }
-            brush?.run { drawRing(vp.offset, s, cw, ch) }
+            val aimed = cursor?.takeIf { it.at.isSpecified }?.let { it.aim(it.at, size) }
+            brush?.run { drawRing(vp.offset, s, cw, ch, cursor?.let { aimed?.spot ?: Offset.Unspecified }) }
+            if (aimed != null) drawCursor(aimed, brush == null || brush.picks, grabIcon, clickIcon)
         })
         ZoomBadge({ vp.zoomPct }, Modifier.align(Alignment.TopCenter).padding(top = BAR_H))
     }
+}
+
+/** One press on the canvas from [from], screen px — a finger's or the cursor's: [tool], [select] and [brush] begin their gestures (the Selection brush doesn't paint a touch
+that moves the selection); moves past [slop] drag them */
+private class Press(private val from: Offset, private val vp: Viewport, private val tool: CanvasTool<*>?, private val select: SelectTool?, brush: BrushTool?, sel: Selection?,
+    d: Density, private val slop: Float) {
+    private val painting: BrushTool?
+    var moving = false // past touchSlop: a pinch start won't move things
+        private set
+
+    init {
+        tool?.begin(from - vp.offset, vp.scale, d)
+        select?.begin((from - vp.offset) / vp.scale, sel, with(d) { CLOSE_REACH.toPx() } / vp.scale)
+        painting = brush?.takeUnless { select?.moves == true }
+        painting?.begin(from, vp.offset, vp.scale, d.density)
+    }
+
+    /** To [p] placed by [at]; the brush gets [past] points before it too: a fast stroke keeps its curves. True — something is dragged */
+    fun move(p: Offset, past: List<HistoricalChange>, at: (Offset) -> Offset = { it }): Boolean {
+        val q = at(p)
+        if (!moving && (q - from).getDistance() > slop) moving = true
+        if (!moving || tool == null && select == null && painting == null) return false
+        painting?.let { b -> for (h in past.indices) b.drag(at(past[h].position)); b.drag(q) }
+        tool?.drag(q - vp.offset)
+        select?.drag((q - vp.offset) / vp.scale)
+        return true
+    }
+
+    fun cancel() { select?.cancel(); painting?.cancel() }
+
+    fun finish() { select?.finish(tap = !moving); painting?.finish() }
+
+    /** Also on cancellation; the tool's history step once per gesture */
+    fun end() { tool?.finish(); select?.cancel(); painting?.cancel() }
 }
 
 /** Read only here: a zoom step recomposes only the badge */

@@ -1,7 +1,8 @@
 // Pixel loops of brush strokes (Stroke.kt Dab: visits), of the Finger smudge (Blur.kt Smear.dab), of Replace color, Shadows/Highlights and Sharpness
-// (Correction.kt), of directional blur (Effect.kt Streaked); Kotlin side — Kernels.kt
+// (Correction.kt), of directional blur (Effect.kt Streaked), of the brushes' edge-aware mode (Edges.kt); Kotlin side — Kernels.kt
 #include <android/bitmap.h>
 #include <jni.h>
+#include <limits.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -23,9 +24,10 @@ static inline int span(float x, float y, float r2, float cy, int* lo, int* hi) {
 }
 
 /* Dab.visit: the dab at (x, y), radius r, into the bw×bh block at (bx, by) (stride B a row). cur — each px's visit going on, acc — its done ones;
-the dab before at (px, py) (NaN — none) tells a visit going on from a new one. lut[0..n] — flow·tip by squared distance / r². out (NULL — none) gets acc over cur */
+the dab before at (px, py) (NaN — none) tells a visit going on from a new one. lut[0..n] — flow·tip by squared distance / r². out (NULL — none) gets acc over cur.
+m (NULL — none) — the dab's Edges cut, mw×mh px from (mx, my), 0 past them: scales lut */
 static void visit(float x, float y, float px, float py, float r, int bx, int by, int bw, int bh, int stride, const jint* lut, int n,
-                  uint8_t* acc, uint8_t* cur, uint8_t* out) {
+                  uint8_t* acc, uint8_t* cur, uint8_t* out, const uint8_t* m, int mx, int my, int mw, int mh) {
     float r2 = r * r, k = n / r2;
     int top = (int) floorf(y - r), bottom = (int) ceilf(y + r);
     if (top < by) top = by;
@@ -37,11 +39,13 @@ static void visit(float x, float y, float px, float py, float r, int bx, int by,
         if (lo < bx) lo = bx;
         if (hi > bx + bw - 1) hi = bx + bw - 1;
         span(px, py, r2, cy, &plo, &phi);
+        const uint8_t* mr = m && row >= my && row < my + mh ? m + (size_t) (row - my) * mw : NULL;
         int i = (row - by) * stride + lo - bx;
         for (int col = lo; col <= hi; col++, i++) {
             float dx = col + 0.5f - x;
             int j = (int) ((dx * dx + dy2) * k);
             int v = lut[j < n ? j : n], c = cur[i];
+            if (m) v = mr && col >= mx && col < mx + mw ? (v * mr[col - mx] + 127) / 255 : 0;
             if (col < plo || col > phi) { // a new visit: the last one is done
                 if (c) acc[i] = (uint8_t) over(acc[i], c);
                 c = 0;
@@ -58,13 +62,19 @@ static void visit(float x, float y, float px, float py, float r, int bx, int by,
 #define FREE(a, p, mode) if (p) (*env)->ReleasePrimitiveArrayCritical(env, a, p, mode)
 
 JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_visit(JNIEnv* env, jobject thiz, jfloat x, jfloat y, jfloat px, jfloat py, jfloat r,
-    jint bx, jint by, jint bw, jint bh, jint stride, jintArray lut, jbyteArray acc, jbyteArray cur, jbyteArray out) {
+    jint bx, jint by, jint bw, jint bh, jint stride, jintArray lut, jbyteArray acc, jbyteArray cur, jbyteArray out, jbyteArray mask, jint mx, jint my, jint mw, jint mh) {
+    if (mask && (mw < 0 || mh < 0 || (size_t) (*env)->GetArrayLength(env, mask) < (size_t) mw * (size_t) mh)) {
+        (*env)->ThrowNew(env, (*env)->FindClass(env, "java/io/IOException"), "Bad mask");
+        return;
+    }
     int n = (*env)->GetArrayLength(env, lut) - 1;
     jint* l = HOLD(lut);
     uint8_t* a = l ? HOLD(acc) : NULL;
     uint8_t* c = a ? HOLD(cur) : NULL;
     uint8_t* o = c && out ? HOLD(out) : NULL;
-    if (c && (!out || o)) visit(x, y, px, py, r, bx, by, bw, bh, stride, l, n, a, c, o);
+    uint8_t* m = c && (!out || o) && mask ? HOLD(mask) : NULL;
+    if (c && (!out || o) && (!mask || m)) visit(x, y, px, py, r, bx, by, bw, bh, stride, l, n, a, c, o, m, mx, my, mw, mh);
+    FREE(mask, m, JNI_ABORT);
     FREE(out, o, 0);
     FREE(cur, c, 0);
     FREE(acc, a, 0);
@@ -86,7 +96,7 @@ JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_visits(JNIEnv* env
         for (int i = 0; i < dabs; i++) {
             float x = p[2 * i] * s, y = p[2 * i + 1] * s;
             if (x + r > bx && y + r > by && x - r < bx + bw && y - r < by + bh)
-                visit(x, y, i ? p[2 * i - 2] * s : NAN, i ? p[2 * i - 1] * s : NAN, r, bx, by, bw, bh, stride, l, n, a, c, NULL);
+                visit(x, y, i ? p[2 * i - 2] * s : NAN, i ? p[2 * i - 1] * s : NAN, r, bx, by, bw, bh, stride, l, n, a, c, NULL, NULL, 0, 0, 0, 0);
         }
         for (size_t i = 0; i < size; i++) a[i] = (uint8_t) over(a[i], c[i]);
     }
@@ -841,4 +851,184 @@ JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_streak(JNIEnv* env
     }
     FREE(r, rr, JNI_ABORT);
     unlock_px(env, src, sp, out, op, err);
+}
+
+/* «С учётом краёв» (Edges.kt): a dab reaches only the px of its circle joined to its center through px like the one under it, the sample. How unlike a px is:
+the most a channel of their straight colors differs × their lesser alpha (a faint px' color counts little), or a quarter of their alphas' difference, if more:
+an object's soft rim stays with it, transparency next to an opaque px is a wall */
+
+/* t[unlikeness] — likeness: fully up to tolerance, falling to 0 at limit: not like at all, nor joins; ≥ 1 between. limit ≤ tolerance — a hard step past it */
+static void alike_table(uint8_t* t, int tolerance, int limit) {
+    for (int d = 0; d < 256; d++)
+        t[d] = d <= tolerance ? 255 : d >= limit ? 0 : (uint8_t) fmaxf(1.f, smooth((float) (limit - d) / (float) (limit - tolerance)) * 255.f + 0.5f);
+}
+
+/* Straight RGBA of premultiplied p */
+static inline void straight(const uint8_t* p, int* c) {
+    uint32_t a = p[3];
+    c[3] = (int) a;
+    for (int i = 0; i < 3; i++) {
+        uint32_t v = (p[i] * UNPREMUL[a] + 32768) >> 16;
+        c[i] = v > 255 ? 255 : (int) v;
+    }
+}
+
+/* Likeness (by table t) of premultiplied p to the straight sample s */
+static inline int alike(const uint8_t* p, const int* s, const uint8_t* t) {
+    int c[4], d = 0;
+    straight(p, c);
+    for (int i = 0; i < 3; i++) {
+        int e = abs(c[i] - s[i]);
+        if (e > d) d = e;
+    }
+    d = d * (c[3] < s[3] ? c[3] : s[3]) / 255;
+    int da = abs(c[3] - s[3]) / 4;
+    return t[d > da ? d : da];
+}
+
+/* stack with room for one more past top; NULL — out of memory, stack freed */
+static int* room(int* stack, size_t top, size_t* cap) {
+    if (top < *cap) return stack;
+    int* g = realloc(stack, 2 * *cap * sizeof(int));
+    if (!g) free(stack);
+    else *cap *= 2;
+    return g;
+}
+
+/* Open to a flood: likeness past 0, or (gaps) below full */
+static inline int passable(uint8_t v, int gaps) { return gaps ? v < 255 : v > 0; }
+
+/* Scanline flood from px `from` over the px of the circle's spans lo..hi not seen and passable, 4-connected (gaps: 8-), marking them seen.
+0 — out of memory, *stack freed */
+static int flood(const uint8_t* o, uint8_t* seen, const int* lo, const int* hi, int w, int h, int from, int gaps, int** stack, size_t* cap) {
+    size_t top = 0;
+    int* st = *stack;
+    st[top++] = from;
+    while (top) {
+        int i = st[--top], row = i / w, a = i % w, b = a;
+        const uint8_t* line = o + (size_t) row * w;
+        uint8_t* done = seen + (size_t) row * w;
+        if (a < lo[row] || a > hi[row] || done[a] || !passable(line[a], gaps)) continue;
+        while (a > lo[row] && !done[a - 1] && passable(line[a - 1], gaps)) a--;
+        while (b < hi[row] && !done[b + 1] && passable(line[b + 1], gaps)) b++;
+        memset(done + a, 1, (size_t) (b - a + 1));
+        for (int j = row - 1; j <= row + 1; j += 2) {
+            if (j < 0 || j >= h) continue;
+            const uint8_t* nl = o + (size_t) j * w;
+            const uint8_t* nd = seen + (size_t) j * w;
+            int k = a - gaps > lo[j] ? a - gaps : lo[j], e = b + gaps < hi[j] ? b + gaps : hi[j];
+            for (; k <= e; k++) {
+                if (nd[k] || !passable(nl[k], gaps)) continue;
+                if (!(st = room(st, top, cap))) {
+                    *stack = NULL;
+                    return 0;
+                }
+                st[top++] = j * w + k;
+                while (k < e && !nd[k + 1] && passable(nl[k + 1], gaps)) k++; // the run's one seed
+            }
+        }
+    }
+    *stack = st;
+    return 1;
+}
+
+/* Edges.cut: out (w×h, a byte a px) gets the likeness of src's px — premultiplied RGBA of the raster px from (x0, y0) — to the one under (x, y) over the px of the
+circle (x, y), r that Dab.visit holds, joined to it through px with some, 4-connected; the rest 0; likeness by tolerance, limit (alike_table). Then holes —
+8-connected px held less than fully, off the circle's edge, at most `hole` of them (specks, a dotted line inside an area) — are held fully: a wall crossing the
+dab touches its edge. Each px' likeness is found once; the joined px and the gaps reaching the edge by scanline floods, only the rest — enclosed — px by px */
+JNIEXPORT void JNICALL Java_com_perkus_imagoedit_data_Kernels_edges(JNIEnv* env, jobject thiz, jbyteArray src, jint x0, jint y0, jint w, jint h, jfloat x, jfloat y,
+    jfloat r, jint tolerance, jint limit, jint hole, jbyteArray out) {
+    size_t n = w > 0 && h > 0 ? (size_t) w * (size_t) h : 0, cap = 1024;
+    const char* err = !n || n > INT_MAX || (size_t) (*env)->GetArrayLength(env, src) / 4 < n || (size_t) (*env)->GetArrayLength(env, out) < n ? "Bad edges" : NULL;
+    int* lo = !err ? malloc(2 * (size_t) h * sizeof(int)) : NULL;
+    int* stack = lo ? malloc(cap * sizeof(int)) : NULL;
+    uint8_t* seen = stack ? calloc(n, 1) : NULL;
+    if (!err && !seen) err = "Out of memory";
+    uint8_t* s = !err ? HOLD(src) : NULL;
+    uint8_t* o = s ? HOLD(out) : NULL;
+    if (o) {
+        int *hi = lo + h, t[4];
+        float r2 = r * r;
+        memset(o, 0, n);
+        for (int j = 0; j < h; j++) {
+            if (!span(x, y, r2, (float) (y0 + j) + 0.5f, &lo[j], &hi[j])) {
+                lo[j] = 1;
+                hi[j] = 0;
+                continue;
+            }
+            lo[j] = lo[j] - x0 > 0 ? lo[j] - x0 : 0;
+            hi[j] = hi[j] - x0 < w - 1 ? hi[j] - x0 : w - 1;
+        }
+        int cx = (int) floorf(x) - x0, cy = (int) floorf(y) - y0;
+        cx = cx < 0 ? 0 : cx < w ? cx : w - 1;
+        cy = cy < 0 ? 0 : cy < h ? cy : h - 1;
+        straight(s + 4 * ((size_t) cy * w + cx), t);
+        uint8_t like[256];
+        alike_table(like, tolerance, limit);
+        for (int j = 0; j < h; j++) {
+            const uint8_t* p = s + 4 * (size_t) j * w;
+            uint8_t* line = o + (size_t) j * w;
+            for (int c = lo[j]; c <= hi[j]; c++) line[c] = (uint8_t) alike(p + 4 * c, t, like);
+        }
+        if (!flood(o, seen, lo, hi, w, h, cy * w + cx, 0, &stack, &cap)) err = "Out of memory";
+        for (int j = 0; j < h; j++) {
+            uint8_t* line = o + (size_t) j * w;
+            const uint8_t* done = seen + (size_t) j * w;
+            for (int c = lo[j]; c <= hi[j]; c++) if (!done[c]) line[c] = 0;
+        }
+        if (hole > 0 && !err) {
+            memset(seen, 0, n);
+            for (int j = 0; j < h && !err; j++) {
+                int a = lo[j] + 1, b = hi[j] - 1; // the px off the edge: no 4-neighbor past it
+                for (int q = j - 1; q <= j + 1; q += 2) {
+                    if (q < 0 || q >= h || lo[q] > hi[q]) {
+                        a = hi[j] + 1;
+                        break;
+                    }
+                    if (lo[q] > a) a = lo[q];
+                    if (hi[q] < b) b = hi[q];
+                }
+                for (int c = lo[j]; c <= hi[j] && !err; c++) {
+                    if (c >= a && c <= b) {
+                        c = b;
+                        continue;
+                    }
+                    size_t k = (size_t) j * w + c;
+                    if (o[k] < 255 && !seen[k] && !flood(o, seen, lo, hi, w, h, (int) k, 1, &stack, &cap)) err = "Out of memory";
+                }
+            }
+            for (int j = 0; j < h && !err; j++)
+                for (int c = lo[j]; c <= hi[j] && !err; c++) {
+                    size_t i0 = (size_t) j * w + c, head = 0, top = 0;
+                    if (o[i0] == 255 || seen[i0]) continue;
+                    seen[i0] = 1;
+                    stack[top++] = (int) i0;
+                    while (head < top && !err) { // the stack as a queue: it keeps the hole's px
+                        int i = stack[head++], row = i / w, col = i % w;
+                        for (int nr = row - 1; nr <= row + 1 && !err; nr++) {
+                            if (nr < 0 || nr >= h) continue;
+                            for (int nc = col - 1; nc <= col + 1; nc++) {
+                                if (nc < lo[nr] || nc > hi[nr]) continue;
+                                size_t k = (size_t) nr * w + nc;
+                                if (o[k] == 255 || seen[k]) continue;
+                                seen[k] = 1;
+                                if (!(stack = room(stack, top, &cap))) {
+                                    err = "Out of memory";
+                                    break;
+                                }
+                                stack[top++] = (int) k;
+                            }
+                        }
+                    }
+                    if (!err && top <= (size_t) hole)
+                        for (size_t q = 0; q < top; q++) o[stack[q]] = 255;
+                }
+        }
+    }
+    FREE(out, o, 0);
+    FREE(src, s, JNI_ABORT);
+    free(seen);
+    free(stack);
+    free(lo);
+    if (err) unlock_px(env, NULL, NULL, NULL, NULL, err);
 }

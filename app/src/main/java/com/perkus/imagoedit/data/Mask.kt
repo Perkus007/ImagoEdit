@@ -168,6 +168,24 @@ fun Canvas.composite(into: Bitmap, x: Int, y: Int, bmp: Bitmap?, w: Int, h: Int,
     }
 }
 
+/** A drawer on its own canvas: (into, x, y) — [into] (software) gets the layer's px ([bmp], [mask], [patch]) from raster px (x + [ox], y + [oy]) as composite at
+[k] px per file px, or as placed on the canvas, [onto] mapping canvas px into the raster's space: k px per px of it */
+fun Layer.renderer(bmp: Bitmap?, mask: LayerMask?, patch: Tiles?, k: Float, onto: Matrix? = null, ox: Int = 0, oy: Int = 0): (Bitmap, Int, Int) -> Unit {
+    val c = Canvas()
+    val p = MaskPaints()
+    val w = fileW
+    val h = fileH
+    if (onto == null) return { into, x, y -> c.composite(into, x + ox, y + oy, bmp, w, h, mask, patch, p, k) }
+    val m = fileToCanvas().apply { postConcat(onto); postScale(k, k) }
+    return { into, x, y ->
+        into.eraseColor(Color.TRANSPARENT)
+        c.setBitmap(into)
+        c.translate(-(x + ox).toFloat(), -(y + oy).toFloat())
+        c.concat(m)
+        c.drawMasked(bmp, w, h, mask, patch, k, 255, k != 1f, p)
+    }
+}
+
 /** Clipped to the layer: edge tiles' padding stays unseen */
 private fun Canvas.drawPatch(patch: Tiles, n: Int, top: Float, w: Float, bottom: Float, p: MaskPaints) {
     save()

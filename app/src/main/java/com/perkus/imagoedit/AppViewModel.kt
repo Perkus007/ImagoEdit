@@ -22,6 +22,7 @@ import androidx.lifecycle.viewModelScope
 import com.perkus.imagoedit.data.Blend
 import com.perkus.imagoedit.data.ContentTransform
 import com.perkus.imagoedit.data.Cut
+import com.perkus.imagoedit.data.EdgePx
 import com.perkus.imagoedit.data.ExportSettings
 import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.data.History
@@ -151,6 +152,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Layers a stroke grew (Stroke.room), by Layer.file before: the layer as it was and its new file. Strokes drawn on it meanwhile are carried onto the grown one */
     private val regrown = HashMap<String?, Pair<Layer, String>>()
+
+    /** Edge-aware strokes in a row on one layer: [base] — its px before them, [made] — the states (pxKey) they made it, Undo and Redo among them too */
+    private class EdgeRun(val base: EdgePx, val made: Set<Triple<String?, String?, String?>>)
+    private var edgeRun: EdgeRun? = null
+    private val Layer.pxKey get() = Triple(file, mask, patch)
 
     /** Whole data classes compared: reverting everything = no changes; session-only state doesn't count */
     val dirty get() = editing?.persisted?.let { e -> projects.none { it == e } } ?: false
@@ -315,6 +321,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         parked.evictAll()
         tiles.clear()
         regrown.clear()
+        edgeRun = null
     }
 
     fun addImage(resolver: ContentResolver, uri: Uri, reduce: Boolean) {
@@ -668,11 +675,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (strokes.size == 1) bakeNext()
     }
 
-    /** The layer is found by id; its pixels changed meanwhile (not by a stroke growing it) → dropped. A selection stroke joins the selection as it is at its turn */
+    /** The layer is found by id; its pixels changed meanwhile (not by a stroke growing it) → dropped. A selection stroke joins the selection as it is at its turn,
+    edge-aware — by its layer's px as they are then */
     private fun bakeNext() {
         val drawn = strokes.first().first
         val e = editing ?: return baked()
-        if (drawn.select != null) return bakeOff({ drawn.selected(e.width, e.height, e.selection) }) { r -> (editing?.selection === e.selection).also { if (it) select(r) } }
+        if (drawn.select != null) {
+            val cut = edgePx(e.layers.indexOfFirst { it.id == drawn.layer })
+            return bakeOff({ drawn.selected(e.width, e.height, e.selection, cut) }) { r -> (editing?.selection === e.selection).also { if (it) select(r) } }
+        }
         val i = e.layers.indexOfFirst { it.id == drawn.layer }
         val l = e.layers.getOrNull(i) ?: return baked()
         var f = drawn.file
@@ -682,12 +693,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val base = layers[i]?.asAndroidBitmap()
         val m = mask(l)
         val p = patch(l)
+        val cut = edgePx(i)?.takeIf { drawn.edges != null && it.layer.hasImage }
         // A stroke past the layer: the layer grows to hold it first
         bakeOff({
             val g = s.room(at, e.width, e.height)?.let { store.grownLayer(at, base, m, p, it) }
             g to (g?.let { s.rebased(at, it.first) } ?: s).bake(g?.first ?: at, g?.second ?: base, m.takeIf { g == null }, p.takeIf { g == null }, store.stagedName(MASK),
-                store.stagedName(PATCH))
-        }) { (g, r) -> putStroke(s, l, g, r) }
+                store.stagedName(PATCH), cut)
+        }) { (g, r) -> putStroke(s, l, g, r, cut) }
+    }
+
+    /** Layer [i]'s px edge-aware dabs are cut by: as before the edge-aware strokes in a row that made it so — own paint isn't an edge — else as it is */
+    fun edgePx(i: Int): EdgePx? {
+        val p = editing ?: return null
+        val l = p.layers.getOrNull(i) ?: return null
+        return edgeRun?.takeIf { it.base.layer.id == l.id && l.pxKey in it.made }?.base
+            ?: EdgePx(l.paintable(p.width, p.height), layers.getOrNull(i)?.asAndroidBitmap(), mask(l), patch(l))
     }
 
     /** [put] false — what it was done over changed meanwhile: the stroke goes again */
@@ -699,8 +719,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** [grown] — the layer grown to hold the stroke (new file, pixels). false — mask or patch changed meanwhile: bake again */
-    private fun putStroke(s: Stroke, was: Layer, grown: Pair<Layer, Bitmap>?, r: Pair<LayerMask?, Tiles?>?): Boolean {
+    /** [grown] — the layer grown to hold the stroke (new file, pixels); [cut] — the px its dabs were cut by. false — mask or patch changed meanwhile: bake again */
+    private fun putStroke(s: Stroke, was: Layer, grown: Pair<Layer, Bitmap>?, r: Pair<LayerMask?, Tiles?>?, cut: EdgePx?): Boolean {
         val e = editing
         val at = e?.layers?.indexOfFirst { it.id == s.layer } ?: -1
         val l = e?.layers?.getOrNull(at)?.takeIf { it.file == s.file }
@@ -714,7 +734,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         p?.let { tiles[it.id] = it }
         grown?.first?.file?.let { regrown[l.file] = l.paintable(e.width, e.height) to it }
         val g = grown?.first?.copy(visible = l.visible, opacity = l.opacity, blend = l.blend, id = l.id) ?: l.paintable(e.width, e.height)
-        edit(e.copy(layers = e.layers.putAt(at, g.copy(mask = m?.id, patch = p?.id))), grown?.let { layers.putAt(at, it.second.asImageBitmap()) } ?: layers)
+        val now = g.copy(mask = m?.id, patch = p?.id)
+        // The run goes on from its base, or starts at this stroke's
+        if (cut != null) edgeRun = EdgeRun(cut, (edgeRun?.takeIf { it.base === cut }?.made ?: setOf(was.pxKey)) + now.pxKey)
+        edit(e.copy(layers = e.layers.putAt(at, now)), grown?.let { layers.putAt(at, it.second.asImageBitmap()) } ?: layers)
         return true
     }
 

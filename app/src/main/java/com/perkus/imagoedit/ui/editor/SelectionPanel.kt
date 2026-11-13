@@ -6,15 +6,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
@@ -23,7 +20,6 @@ import com.perkus.imagoedit.data.EnumOption
 import com.perkus.imagoedit.data.Feedback
 import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.ui.common.AppIcons
-import com.perkus.imagoedit.ui.common.AppSwitch
 import com.perkus.imagoedit.ui.common.IconBtn
 
 /** name is persisted */
@@ -45,7 +41,7 @@ class SelectionOptions(settings: AppSettings) {
     val tolerance = IntOption(settings, "selection.tolerance", 0..255, 32)
     val contiguous = BoolOption(settings, "selection.contiguous", true) // Off — every matching px, not only the connected region
     val fixedRatio = BoolOption(settings, "selection.fixedRatio", false)
-    val brush = BrushOptions(settings, "selection.brush", listOf(BrushParam.Size)) // only Size: a selection is hard
+    val brush = BrushOptions(settings, "selection.brush", listOf(BrushParam.Size), hardEdge = true) // only Size: a selection is hard
 }
 
 @Composable
@@ -69,10 +65,13 @@ fun SelectionPanel(o: SelectionOptions, select: SelectTool, open: ToolPopup?, on
         }
         SelectStyle.Circle -> SwitchCell(o.fixedRatio, "1:1")
         SelectStyle.Wand -> {
-            PopupBtn(ToolPopup.Tolerance, AppIcons.Slider, open, onOpen) { ParamRow(stringResource(R.string.tolerance), o.tolerance) }
+            PopupBtn(ToolPopup.Tolerance, AppIcons.ChartIncreasing, open, onOpen) { ParamRow(stringResource(R.string.tolerance), o.tolerance) }
             SwitchCell(o.contiguous, stringResource(R.string.select_contiguous))
         }
-        SelectStyle.Brush -> BrushBtn(o.brush, open, onOpen)
+        SelectStyle.Brush -> {
+            BrushBtn(o.brush, open, onOpen)
+            EdgesCell(o.brush, open, onOpen)
+        }
         // The unfinished polygon's own history
         SelectStyle.Polygon -> Row {
             IconBtn(AppIcons.StepBack, select.canUndoVertex) { Feedback.tap(); select.undoVertex() }
@@ -80,13 +79,4 @@ fun SelectionPanel(o: SelectionOptions, select: SelectTool, open: ToolPopup?, on
         }
         else -> Unit
     }
-}
-
-@Composable
-private fun SwitchCell(o: BoolOption, label: String) = Column(
-    Modifier.fillMaxWidth().padding(top = 8.dp).toggleable(o.value, interactionSource = null, indication = null, role = Role.Switch) { o.value = it },
-    horizontalAlignment = Alignment.CenterHorizontally
-) {
-    AppSwitch(o.value)
-    PanelLabel(label, maxLines = 2)
 }

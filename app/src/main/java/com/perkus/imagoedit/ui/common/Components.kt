@@ -198,11 +198,16 @@ fun rememberBounds() = remember { Bounds() }
 
 fun Modifier.trackBounds(b: Bounds) = onGloballyPositioned { b.rect = it.boundsInWindow() }
 
-/** [onChange] while dragging, [onFinished] on release; NumPad ✓ → [onApply]. With a [label] the slider is fixed-width: rows line up */
+/** A quick double tap → [action]; [key] — what it depends on: pointerInput(Unit) would keep the first */
+fun Modifier.doubleTapped(key: Any?, action: () -> Unit) = pointerInput(key) { detectTapGestures(onDoubleTap = { action() }) }
+
+/** [onChange] while dragging, [onFinished] on release; NumPad ✓ → [onApply]; [onReset] — a quick double tap on the [label]. With a label the slider is fixed-width:
+rows line up */
 @Composable
-fun SliderRow(value: Int, range: IntRange, suffix: String, label: String? = null, onFinished: (() -> Unit)? = null, onChange: (Int) -> Unit, onApply: (Float) -> Unit) =
+fun SliderRow(value: Int, range: IntRange, suffix: String, label: String? = null, onFinished: (() -> Unit)? = null, onReset: (() -> Unit)? = null, onChange: (Int) -> Unit,
+    onApply: (Float) -> Unit) =
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        label?.let { Text(it, Modifier.weight(1f), fontSize = 14.sp, textAlign = TextAlign.End, maxLines = 1) }
+        label?.let { Text(it, Modifier.weight(1f).then(if (onReset != null) Modifier.doubleTapped(onReset, onReset) else Modifier), fontSize = 14.sp, textAlign = TextAlign.End, maxLines = 1) }
         SliderField(value, suffix, onApply)
         AppSlider(value, onChange, range, (if (label != null) Modifier.width(LABELED_SLIDER_W) else Modifier.weight(1f)).height(32.dp), onFinished = onFinished)
     }

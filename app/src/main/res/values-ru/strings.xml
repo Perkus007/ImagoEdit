@@ -82,6 +82,8 @@
     <string name="brush_size">Размер</string>
     <string name="brush_hardness">Жёсткость</string>
     <string name="brush_paint">Краска</string>
+    <string name="brush_edges">С учётом\nкраёв</string>
+    <string name="edge_limit">Предел</string>
     <string name="style_healing">Восстанавливающая кисть</string>
     <string name="style_area">Область</string>
     <string name="style_finger">Палец</string>
@@ -103,6 +105,7 @@
     <string name="paste">Вставить</string>
     <string name="clear">Очистить</string>
     <string name="extract">Извлечь</string>
+    <string name="show_cursor">Показать курсор</string>
     <string name="select_all">Выделить всё</string>
     <string name="deselect">Отменить выделение</string>
     <string name="select_pixels">Выделить пиксели</string>
@@ -133,7 +136,7 @@
     <string name="correction_brightness_contrast">Яркость и контрастность</string>
     <string name="correction_temperature">Температура</string>
     <string name="correction_replace_color">Заменить цвет</string>
-    <string name="correction_shadows_highlights">Тени и свет</string>
+    <string name="correction_shadows_highlights">Тени/Свет</string>
     <string name="correction_color_balance">Цветовой баланс</string>
     <string name="correction_sharpness">Резкость</string>
     <string name="correction_shade">Оттенок</string>

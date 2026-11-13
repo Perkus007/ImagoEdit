@@ -133,12 +133,9 @@ class Blurred(private val w: Int, private val h: Int, private val sigma: Float, 
 /** Finger style smudge over a [w]×[h] raster in TILE tiles of premultiplied RGBA, made on first touch by [render]. Each dab keeps [keep] of the carried color:
 the px under the brush move by 2r·keep/(1 − keep) whatever the step. Dabs closer than SMEAR_STEP are skipped. [origins] — needed for into with k < 1.
 After the dabs [render] may run on another thread (prepare): it must have its own canvas */
-class Smear(private val w: Int, private val h: Int, r: Float, val hardness: Float, val keep: Float, private val like: Bitmap?, origins: Boolean = false,
-    private val render: (Bitmap, Int, Int) -> Unit) {
-    private val cols = (w + TILE - 1) / TILE
-    private val tiles = arrayOfNulls<ByteArray>(cols * ((h + TILE - 1) / TILE))
-    private val origin = if (origins) arrayOfNulls<ByteArray>(tiles.size) else null
-    val dirty = BooleanArray(tiles.size)
+class Smear(w: Int, h: Int, r: Float, val hardness: Float, val keep: Float, like: Bitmap?, origins: Boolean = false, render: (Bitmap, Int, Int) -> Unit) {
+    private val px = Rendered(w, h, like, origins, render)
+    val dirty get() = px.dirty
     private val ri = ceil(r).toInt()
     private val n = 2 * ri + 1
     private val profile = IntArray(n * n) { // 256 = 1
@@ -152,7 +149,6 @@ class Smear(private val w: Int, private val h: Int, r: Float, val hardness: Floa
     private var first = true
     private var lastX = 0f
     private var lastY = 0f
-    private var scratch: Bitmap? = null
 
     fun dab(x: Float, y: Float) {
         if (!first && hypot(x - lastX, y - lastY) < SMEAR_STEP * STEP_SLACK) return
@@ -160,55 +156,23 @@ class Smear(private val w: Int, private val h: Int, r: Float, val hardness: Floa
         lastY = y
         val ox = floor(x).toInt() - ri
         val oy = floor(y).toInt() - ri
-        copy(ox, oy, n, n, fp, false)
+        px.copy(ox, oy, n, n, fp, false)
         Kernels.smear(profile, acc, fp, q, first)
         first = false
-        copy(ox, oy, n, n, fp, true)
-    }
-
-    /** Reads (edge repeated past the raster) or writes back ([back], inside only) a [bw]×[bh] block */
-    private fun copy(ox: Int, oy: Int, bw: Int, bh: Int, buf: ByteArray, back: Boolean, of: Array<ByteArray?> = tiles) {
-        for (j in 0 until bh) {
-            val y = oy + j
-            if (back && y !in 0 until h) continue
-            val ty = y.coerceIn(0, h - 1)
-            var i = 0
-            while (i < bw) {
-                val x = ox + i
-                val inside = x in 0 until w
-                val cx = x.coerceIn(0, w - 1)
-                val run = if (inside) minOf(bw - i, w - x, TILE - x % TILE) else 1
-                if (inside || !back) {
-                    val k = ty / TILE * cols + cx / TILE
-                    val at = 4 * (ty % TILE * TILE + cx % TILE)
-                    tile(k)
-                    if (back) { System.arraycopy(buf, 4 * (j * bw + i), tiles[k]!!, at, 4 * run); dirty[k] = true }
-                    else System.arraycopy(of[k]!!, at, buf, 4 * (j * bw + i), 4 * run)
-                }
-                i += run
-            }
-        }
-    }
-
-    private fun tile(k: Int) = tiles[k] ?: ByteArray(4 * TILE * TILE).also { t ->
-        val b = scratch ?: patchTile(like).also { scratch = it }
-        render(b, k % cols * TILE, k / cols * TILE)
-        b.copyPixelsToBuffer(ByteBuffer.wrap(t))
-        tiles[k] = t
-        origin?.set(k, t.copyOf())
+        px.copy(ox, oy, n, n, fp, true)
     }
 
     /** [out] (holding the raster as it was) gets tile ([x0], [y0]) of a raster 1/[k] times bigger. k < 1: stretched and mixed in by how much the px changed (CHANGED),
     so lightly touched areas keep their full detail. [buf] — TILE² px; with the calling thread's and the tiles made by [prepare], tiles may be made on several threads */
     fun into(out: Bitmap, x0: Int, y0: Int, k: Float = 1f, buf: ByteArray = raw) {
         if (k == 1f) {
-            copy(x0, y0, TILE, TILE, buf, false)
+            px.copy(x0, y0, TILE, TILE, buf, false)
             out.copyPixelsFromBuffer(ByteBuffer.wrap(buf))
-            dirty[y0 / TILE * cols + x0 / TILE] = false
+            dirty[y0 / TILE * px.cols + x0 / TILE] = false
             return
         }
-        val s = stretched(out, x0, y0, k, tiles)
-        val o = stretched(out, x0, y0, k, origin ?: tiles)
+        val s = stretched(out, x0, y0, k, false)
+        val o = stretched(out, x0, y0, k, true)
         out.copyPixelsToBuffer(ByteBuffer.wrap(buf))
         for (p in 0 until 4 * TILE * TILE step 4) {
             var d = 0
@@ -224,20 +188,17 @@ class Smear(private val w: Int, private val h: Int, r: Float, val hardness: Floa
     }
 
     /** Makes every tile [into] reads for tile ([x0], [y0]) */
-    fun prepare(x0: Int, y0: Int, k: Float = 1f) {
-        val b = block(x0, y0, k)
-        for (ty in b.top.coerceIn(0, h - 1) / TILE..(b.bottom - 1).coerceIn(0, h - 1) / TILE)
-            for (tx in b.left.coerceIn(0, w - 1) / TILE..(b.right - 1).coerceIn(0, w - 1) / TILE) tile(ty * cols + tx)
-    }
+    fun prepare(x0: Int, y0: Int, k: Float = 1f) = px.make(block(x0, y0, k))
 
     /** Raster px [into] reads for tile ([x0], [y0]); k < 1 — one px of margin: no seams between stretched tiles */
     private fun block(x0: Int, y0: Int, k: Float) = if (k == 1f) Rect(x0, y0, x0 + TILE, y0 + TILE)
         else Rect(floor(x0 * k).toInt() - 1, floor(y0 * k).toInt() - 1, ceil((x0 + TILE) * k).toInt() + 1, ceil((y0 + TILE) * k).toInt() + 1)
 
-    private fun stretched(kind: Bitmap, x0: Int, y0: Int, k: Float, of: Array<ByteArray?>): ByteArray {
+    /** [drawn] — the px as first drawn */
+    private fun stretched(kind: Bitmap, x0: Int, y0: Int, k: Float, drawn: Boolean): ByteArray {
         val b = block(x0, y0, k)
         val buf = ByteArray(4 * b.width() * b.height())
-        copy(b.left, b.top, b.width(), b.height(), buf, false, of)
+        px.copy(b.left, b.top, b.width(), b.height(), buf, false, drawn)
         val small = kind.blankLike(b.width(), b.height()).apply { copyPixelsFromBuffer(ByteBuffer.wrap(buf)) }
         val big = kind.blankLike(TILE, TILE)
         Canvas(big).drawBitmap(small, null, RectF(b.left / k - x0, b.top / k - y0, b.right / k - x0, b.bottom / k - y0), Paint(Paint.FILTER_BITMAP_FLAG))
@@ -245,7 +206,7 @@ class Smear(private val w: Int, private val h: Int, r: Float, val hardness: Floa
         return ByteArray(4 * TILE * TILE).also { big.copyPixelsToBuffer(ByteBuffer.wrap(it)); big.recycle() }
     }
 
-    fun recycle() { scratch?.recycle() }
+    fun recycle() = px.recycle()
 }
 
 /** A live Finger smudge at the bake's raster, made over the layer's [mask] and [patch]: the bake takes it as is while the layer is still so */

@@ -8,8 +8,14 @@ import androidx.annotation.Keep
 internal object Kernels {
     init { System.loadLibrary("imagoedit") }
 
-    /** Dab.visit: one dab into a block; [lut] — flow·tip by squared distance / r², [out] (null — none) gets the coverage where the dab reaches */
-    external fun visit(x: Float, y: Float, px: Float, py: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, lut: IntArray, acc: ByteArray, cur: ByteArray, out: ByteArray?)
+    /** Dab.visit: one dab into a block; [lut] — flow·tip by squared distance / r², [out] (null — none) gets the coverage where the dab reaches;
+    [mask] (null — none) — its Edges cut, [mw]×[mh] px from ([mx], [my]) */
+    external fun visit(x: Float, y: Float, px: Float, py: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, lut: IntArray, acc: ByteArray, cur: ByteArray, out: ByteArray?,
+        mask: ByteArray?, mx: Int, my: Int, mw: Int, mh: Int)
+
+    /** Edges.cut: [out] (a byte per px of [src]) gets the dab at ([x], [y]), radius [r], cut to its center's area — px fully like it up to [tolerance], not at all
+    from [limit] — holes in it of up to [hole] px filled; [src] — premultiplied RGBA of the [w]×[h] raster px from ([x0], [y0]) */
+    external fun edges(src: ByteArray, x0: Int, y0: Int, w: Int, h: Int, x: Float, y: Float, r: Float, tolerance: Int, limit: Int, hole: Int, out: ByteArray)
 
     /** Every dab of [xy] (× [s]) reaching a block, in order: [acc] gets the coverage, [cur] is scratch */
     external fun visits(xy: FloatArray, s: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, lut: IntArray, acc: ByteArray, cur: ByteArray)

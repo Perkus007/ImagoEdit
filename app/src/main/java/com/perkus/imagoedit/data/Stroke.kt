@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Matrix
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PorterDuff
@@ -31,13 +32,14 @@ private val cutOut: Bitmap by lazy { blankMaskTile().apply { eraseColor(Color.BL
 class Clone(val dx: Int, val dy: Int, val heal: Boolean)
 
 /** [layer] — Layer.id; [file] — its pixels at the start; [color] null — erases, unless [clone], [blur], [smudge]. [xy] — dab centers and [r] — file px;
-[area] — the selection at the start. [select] — Selection brush: canvas px, [layer] 0, joined to the selection. [figure] — Fill/Stroke, Transition (erases): covers in place of dabs.
+[area] — the selection at the start. [select] — Selection brush: canvas px, [layer] — the active one, joined to the selection. [figure] — Fill/Stroke, Transition (erases): covers in place of dabs.
 [blur] > 0 — Blur Area, σ file px; [smudge] — Blur Finger, Smear.keep; [smeared] — its live smudge, if at the bake's raster; [filter] — an effect (Effect.kt) or
-Sharpness: the layer's px through it; [recolor], [relight], then [tone] — Correction: the layer's px (filtered) through them */
+Sharpness: the layer's px through it; [recolor], [relight], then [tone] — Correction: the layer's px (filtered) through them. [edges] — each dab cut to its center's
+area of [layer]'s px (EdgePx) by this tolerance (Edges); null — not */
 class Stroke(val layer: Long, val file: String?, val color: Int?, val xy: FloatArray = FloatArray(0), val r: Float = 0f, val hardness: Float = 1f, val flow: Float = 1f,
     val opacity: Float = 1f, val area: Selection?, val clone: Clone? = null, val select: Region.Op? = null, val figure: Figure? = null,
     val blur: Float = 0f, val smudge: Float? = null, val smeared: Smeared? = null, val tone: Tone? = null, val recolor: Recolor? = null, val relight: Relight? = null,
-    val filter: FilterOn? = null) {
+    val filter: FilterOn? = null, val edges: IntRange? = null) {
     /** Puts px, not only erases */
     val paints get() = color != null || clone != null || blur > 0f || smudge != null || tone != null || recolor != null || relight != null || filter != null
 }
@@ -95,11 +97,13 @@ fun Stroke.rebased(from: Layer, to: Layer): Stroke {
     val m = from.fileToCanvas().apply { postConcat(to.canvasToFile()) }
     val p = xy.copyOf().also { m.mapPoints(it) }
     val c = clone?.let { cl -> floatArrayOf(cl.dx.toFloat(), cl.dy.toFloat()).let { v -> m.mapVectors(v); Clone(v[0].roundToInt(), v[1].roundToInt(), cl.heal) } }
-    return Stroke(layer, to.file, color, p, r, hardness, flow, opacity, area, c, select, figure, blur, smudge, tone = tone, recolor = recolor, relight = relight, filter = filter)
+    return Stroke(layer, to.file, color, p, r, hardness, flow, opacity, area, c, select, figure, blur, smudge, tone = tone, recolor = recolor, relight = relight, filter = filter,
+        edges = edges)
 }
 
 private const val TIP_LUT = 1024 // ступени профиля по квадрату расстояния до центра даба
 private const val MASK_EDGE = 64f // px уменьшенной маски мягкого мазка на спад края даба: грубее — край при растяжении неточен
+private const val HELD = 128 // покрытие, с которого кисть выделения берёт пиксель
 
 /** A brush's profile [y] radii off its center: 1 up to [hardness], then an S-curve to 0 at the edge — no kink for the eye to take for a line */
 fun tip(y: Float, hardness: Float): Float {
@@ -122,9 +126,11 @@ class Dab(val hardness: Float, val flow: Float) {
     fun draw(c: Canvas, x: Float, y: Float, r: Float) = c.drawCircle(x, y, r, paint)
 
     /** Adds the dab at ([x], [y]), radius [r] raster px, to the [bw]×[bh] block at ([bx], [by]) ([stride] B a row): [cur] — each px's visit going on, [acc] — its done ones.
-    The dab before at ([px], [py]) (NaN — none) tells a visit going on from a new one. [out] (null — none) gets acc over cur where this dab reaches */
-    fun visit(x: Float, y: Float, px: Float, py: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, acc: ByteArray, cur: ByteArray, out: ByteArray?) =
-        Kernels.visit(x, y, px, py, r, bx, by, bw, bh, stride, lut(r), acc, cur, out)
+    The dab before at ([px], [py]) (NaN — none) tells a visit going on from a new one. [out] (null — none) gets acc over cur where this dab reaches; [cut] — Edges
+    cut this dab */
+    fun visit(x: Float, y: Float, px: Float, py: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, acc: ByteArray, cur: ByteArray, out: ByteArray?,
+        cut: Edges? = null) =
+        Kernels.visit(x, y, px, py, r, bx, by, bw, bh, stride, lut(r), acc, cur, out, cut?.mask, cut?.x0 ?: 0, cut?.y0 ?: 0, cut?.mw ?: 0, cut?.mh ?: 0)
 
     /** Every dab of [xy] (× [s]) into a block as [visit]: [acc] gets the coverage, [cur] is scratch */
     fun visits(xy: FloatArray, s: Float, r: Float, bx: Int, by: Int, bw: Int, bh: Int, stride: Int, acc: ByteArray, cur: ByteArray) =
@@ -144,8 +150,8 @@ class Dab(val hardness: Float, val flow: Float) {
 Clone — the layer's own px through the draft; healing — toward the healed px (Heal.kt); blur, filter — lerp toward the blurred, smudged (its coverage is hard) or filtered layer,
 recolor, relight, tone — toward the layer (filtered) through them (recolor, relight alone: only tiles with px they change).
 Painting, cloning, blurring → patch (a new tile starts as base × mask, the mask tile becomes cutOut); erasing → patch where it has a tile, else mask.
-null — nothing reaches the layer; else the new mask and patch */
-fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId: String, patchId: String): Pair<LayerMask?, Tiles?>? {
+[cut] — the px [edges] cut the dabs by. null — nothing reaches the layer; else the new mask and patch */
+fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId: String, patchId: String, cut: EdgePx?): Pair<LayerMask?, Tiles?>? {
     if (opacity <= 0f || flow <= 0f) return null
     val w = l.fileW
     val h = l.fileH
@@ -172,8 +178,11 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
     val hard = if (smudge != null) 1f else hardness
     val feather = area?.feather
     val keep = keepPaint()
-    // Soft dabs go into a mask ms (2⁻ⁿ) px per file px, stretched: their edge falls off over MASK_EDGE..2·MASK_EDGE of its px
-    val ms = run { var s = 1f; while ((1 - hard) * r * s / 2 >= MASK_EDGE) s /= 2; s }
+    // Soft dabs go into a mask ms (2⁻ⁿ) px per file px, stretched: their edge falls off over MASK_EDGE..2·MASK_EDGE of its px. Edge-aware ones — at full size,
+    // their coverage made once for all tiles
+    val aware = cut?.takeIf { edges != null && it.layer.hasImage }
+    val ms = if (aware != null) 1f else run { var s = 1f; while ((1 - hard) * r * s / 2 >= MASK_EDGE) s /= 2; s }
+    val edged = if (aware != null && edges != null) edgeCover(w, h, aware.bmp, aware.renderer(toFile, 1f), xy, r, Dab(hard, flow), edges) else null
     val stretch = tilePaint().apply { isFilterBitmap = true }
 
     /** One thread's drawing state (see parallel) */
@@ -188,6 +197,8 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
         private val acc by lazy(LazyThreadSafetyMode.NONE) { ByteArray(TILE * TILE) }
         private val cur by lazy(LazyThreadSafetyMode.NONE) { ByteArray(TILE * TILE) }
         private var block: Bitmap? = null
+        private val plain = tilePaint()
+        private val rect = RectF()
         val src = Canvas()
         val keepDraft = keepPaint()
         val draft = blankMaskTile()
@@ -210,8 +221,9 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
             }
         }
 
-        /** Dabs reaching [left]..[right] × [top]..[bottom] of [c] (ALPHA_8), as dabsOn; not solid ones — by visits, a TILE block at a time */
+        /** Dabs reaching [left]..[right] × [top]..[bottom] of [c] (ALPHA_8), as dabsOn; not solid ones — by visits, a TILE block at a time; edge-aware — [edged] */
         private fun laid(c: Canvas, left: Int, top: Int, right: Int, bottom: Int, s: Float) {
+            if (edged != null) return c.drawTiles(edged.levels[0], edged.cols(0), 1f, plain, rect)
             if (dab.solid) return dabsOn(c, left, top, right, bottom, s)
             val b = block ?: blankMaskTile().also { block = it }
             for (by in top until bottom step TILE) for (bx in left until right step TILE) {
@@ -259,17 +271,15 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
     val ks = minOf(1f, SMEAR_MAX / r)
     // The live smudge over this very layer isn't made again
     val smear = smeared?.takeIf { it.mask === mask && it.patch === patch }?.smear ?: smudge?.let { keeps ->
-        val sc = Canvas()
-        val sp = MaskPaints()
-        Smear(ceil(w * ks).toInt(), ceil(h * ks).toInt(), r * ks, hardness, keeps, base, ks < 1f) { into, x, y -> sc.composite(into, x, y, base, w, h, mask, patch, sp, ks) }
+        Smear(ceil(w * ks).toInt(), ceil(h * ks).toInt(), r * ks, hardness, keeps, base, ks < 1f, l.renderer(base, mask, patch, ks))
             .also { s -> for (i in 0 until xy.size / 2) s.dab(xy[2 * i] * ks, xy[2 * i + 1] * ks) }
     }
     val filtered = if (blur > 0f) Blurred(w, h, blur, BLUR_EXACT) else filter?.invoke(w, h, toFile)
 
     return try {
         val first = worker(0)
-        // A figure's reach may hold tiles it misses: only covered ones become patch tiles
-        if (figure != null) {
+        // A figure's or edge-aware dabs' reach may hold tiles they miss: only covered ones become patch tiles
+        if (figure != null || edged != null) {
             val probe = blankMaskTile()
             val blank = blankMaskTile()
             for (k in touched.indices) if (touched[k]) { first.cover(probe, k % cols * TILE, k / cols * TILE); touched[k] = !probe.sameAs(blank) }
@@ -346,11 +356,12 @@ fun Stroke.bake(l: Layer, base: Bitmap?, mask: LayerMask?, patch: Tiles?, maskId
             if (paints) cutOut else tileDrawn(old, ::blankMaskTile, x0, y0, w, h) { worker(wk).dabs(it, x0, y0, onMask) }
         }
         m to p
-    } finally { workers.forEach { it?.recycle() }; smear?.recycle() }
+    } finally { workers.forEach { it?.recycle() }; smear?.recycle(); edged?.recycle() }
 }
 
-/** A [select] stroke joined to [base] on whole px: those whose centers its dabs hold. Off the main thread */
-fun Stroke.selected(cw: Int, ch: Int, base: Selection?): Selection? {
+/** A [select] stroke joined to [base] on whole px: those its dabs hold at least half — whose centers they hold; [edges] — each dab cut to its center's area of
+[cut]. Off the main thread */
+fun Stroke.selected(cw: Int, ch: Int, base: Selection?, cut: EdgePx?): Selection? {
     val combine = select ?: return base
     val b = RectF()
     for (i in 0 until xy.size / 2) b.union(xy[2 * i] - r, xy[2 * i + 1] - r, xy[2 * i] + r, xy[2 * i + 1] + r)
@@ -360,10 +371,16 @@ fun Stroke.selected(cw: Int, ch: Int, base: Selection?): Selection? {
     val cover = createBitmap(at.width(), at.height(), Bitmap.Config.ALPHA_8)
     Canvas(cover).run {
         translate(-at.left.toFloat(), -at.top.toFloat())
-        val p = Paint().apply { isAntiAlias = false }
-        for (i in 0 until xy.size / 2) drawCircle(xy[2 * i], xy[2 * i + 1], r, p)
+        if (edges != null && cut?.layer?.hasImage == true) {
+            val t = edgeCover(cw, ch, cut.bmp, cut.renderer(Matrix(), 1f), xy, r, Dab(hardness, flow), edges)
+            drawTiles(t.levels[0], t.cols(0), 1f, tilePaint(), RectF())
+            t.recycle()
+        } else {
+            val p = Paint().apply { isAntiAlias = false }
+            for (i in 0 until xy.size / 2) drawCircle(xy[2 * i], xy[2 * i + 1], r, p)
+        }
     }
-    val drawn = cover.alphaRegion(at.left, at.top, 1)
+    val drawn = cover.alphaRegion(at.left, at.top, HELD)
     cover.recycle()
     return Region(base?.region ?: Region()).apply { op(drawn, combine) }.toSelection()
 }

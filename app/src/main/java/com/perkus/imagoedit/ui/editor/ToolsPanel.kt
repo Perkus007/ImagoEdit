@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -44,6 +45,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
@@ -55,6 +58,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -62,9 +66,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.perkus.imagoedit.R
 import com.perkus.imagoedit.data.AppSettings
+import com.perkus.imagoedit.data.BoolOption
 import com.perkus.imagoedit.data.EnumOption
 import com.perkus.imagoedit.data.IntOption
 import com.perkus.imagoedit.ui.common.AppIcons
+import com.perkus.imagoedit.ui.common.AppSwitch
 import com.perkus.imagoedit.ui.common.BAR_H
 import com.perkus.imagoedit.ui.common.LocalFrame
 import com.perkus.imagoedit.ui.common.MenuItem
@@ -90,6 +96,7 @@ private val TIP_SHAPE = RoundedCornerShape(4.dp)
 private val ROUND_BTN = 50.dp
 private val CHECKER = 4.dp // клетка шахматки под цветом кнопки
 private val SECTION_GAP = 8.dp
+private val MORE_ICON = 16.dp // стрелка «есть ниже» в углу панели: меньше поля сбоку круглых кнопок, не заслоняет их
 private val MENU_ICON_CENTER = 28.dp // отступ Popover 8 + отступ MenuItem 8 + половина иконки 12
 
 /** name is persisted */
@@ -152,17 +159,30 @@ fun ToolsPanel(tool: EnumOption<Tool>, options: ToolOptions, picture: PipetteSou
     })
     if (picking) Column(Modifier.graphicsLayer { scaleY = unfold.value; transformOrigin = TransformOrigin(0.5f, 0f) }) {
         others.forEachIndexed { i, t -> ToolCell(t, i == hover, Modifier.plainClickable { picking = false; tool.value = t }, tip = i == hover) }
-    } else Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), Arrangement.spacedBy(SECTION_GAP), Alignment.CenterHorizontally) { // each child a section
-        when (current) {
-            Tool.Selection -> SelectionPanel(options.selection, select, popup, onPopup)
-            Tool.Drawing -> {
-                BrushBtn(options.drawing, popup, onPopup)
-                ColorBtn(options.color, ColorOpacity(options.drawing[BrushParam.Opacity]), picture, onPopup)
+    } else Box(Modifier.weight(1f).fillMaxWidth()) {
+        val scroll = rememberScrollState()
+        Column(
+            // padding inside the scroll: at its end the last section stays SECTION_GAP above Undo/Redo
+            Modifier.fillMaxWidth().verticalScroll(scroll, overscrollEffect = null).padding(bottom = SECTION_GAP), Arrangement.spacedBy(SECTION_GAP),
+            Alignment.CenterHorizontally
+        ) { // each child a section
+            when (current) {
+                Tool.Selection -> SelectionPanel(options.selection, select, popup, onPopup)
+                Tool.Drawing -> {
+                    BrushBtn(options.drawing, popup, onPopup)
+                    ColorBtn(options.color, ColorOpacity(options.drawing[BrushParam.Opacity]), picture, onPopup)
+                    EdgesCell(options.drawing, popup, onPopup)
+                }
+                Tool.Stamp -> StampPanel(options.stamp, popup, onPopup)
+                Tool.Eraser -> {
+                    BrushBtn(options.eraser, popup, onPopup)
+                    EdgesCell(options.eraser, popup, onPopup)
+                }
+                Tool.Blur -> BlurPanel(options.blur, popup, onPopup)
             }
-            Tool.Stamp -> StampPanel(options.stamp, popup, onPopup)
-            Tool.Eraser -> BrushBtn(options.eraser, popup, onPopup)
-            Tool.Blur -> BlurPanel(options.blur, popup, onPopup)
         }
+        // More below: drawn while the panel scrolls down, read in the draw phase
+        Icon(AppIcons.Backspace, null, Modifier.align(Alignment.BottomEnd).size(MORE_ICON).rotate(-90f).drawWithContent { if (scroll.canScrollForward) drawContent() })
     }
 }
 
@@ -231,8 +251,19 @@ fun ColorBtn(o: ColorOptions, opacity: ColorOpacity?, source: PipetteSource, onO
 fun PopupBtn(kind: ToolPopup, icon: ImageVector, open: ToolPopup?, onOpen: (OpenPopup) -> Unit, content: @Composable () -> Unit) =
     RoundBtn(icon, open == kind) { onOpen(OpenPopup(kind, it, content = content)) }
 
+/** [set] — a new value, [o]'s by default; a quick double tap on the label sets o's default */
 @Composable
-fun ParamRow(label: String, o: IntOption, suffix: String = "") = SliderRow(o.value, o.range, suffix, label, onChange = { o.value = it }) { o.value = it.roundToInt() }
+fun ParamRow(label: String, o: IntOption, suffix: String = "", set: (Int) -> Unit = { o.value = it }) =
+    SliderRow(o.value, o.range, suffix, label, onReset = { set(o.default) }, onChange = set) { set(it.roundToInt()) }
+
+@Composable
+fun SwitchCell(o: BoolOption, label: String) = Column(
+    Modifier.fillMaxWidth().padding(top = 8.dp).toggleable(o.value, interactionSource = null, indication = null, role = Role.Switch) { o.value = it },
+    horizontalAlignment = Alignment.CenterHorizontally
+) {
+    AppSwitch(o.value)
+    PanelLabel(label, maxLines = 2)
+}
 
 /** [p] — the open popup or null; closes by a press outside or Back. Card width = its widest row. One with [OpenPopup.shown] stays composed until slid away */
 @Composable

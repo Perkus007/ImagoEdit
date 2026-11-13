@@ -74,6 +74,8 @@ It works fully offline: no ads, no analytics, no internet permission.
 - **Healing brush**: clones texture and blends it into the surrounding color and light.
 - **Blur**: two styles — **Area** blurs under the brush, **Finger** smudges pixels along the stroke.
 - Brush size is set in screen units: zoom in for finer strokes.
+- **Edge-aware** mode (Drawing, Eraser, selection Brush): a stroke stays in the area under the brush center and stops at contrasting edges.
+  Tolerance and limit are adjustable; your own strokes don't count as edges.
 - Color: hue/saturation/brightness sliders, saved colors, eyedropper with a magnifier.
 
 ### Move and transform
@@ -117,6 +119,8 @@ It works fully offline: no ads, no analytics, no internet permission.
 - **Size canvas**: scale all layers to a new size, each axis separately, with or without aspect ratio locking.
 - **Rotate canvas**: 90° right or left, 180°, horizontal and vertical flip. All layers and the selection rotate together.
 - Pinch to zoom and pan.
+- **Cursor mode** (**Edit** → **Show cursor**): a finger moves a pointer placed beside it, so the finger doesn't hide the spot.
+  A second finger on the click button acts as a touch at the pointer, with any tool.
 
 ### History and recovery
 - Undo/Redo for every edit.
@@ -143,6 +147,7 @@ and never overwrite an older file.
 - Landscape, full screen
 - English, Russian, Ukrainian. The app follows the system language, or uses the one set in Settings
 - Haptic feedback and sounds, each can be turned off
+- Double-tap a slider's name to reset it to its default
 - Settings → About: version, license, links, third-party licenses
 
 ## Limits

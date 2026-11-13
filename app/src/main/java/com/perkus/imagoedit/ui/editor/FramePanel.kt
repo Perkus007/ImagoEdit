@@ -13,7 +13,6 @@ import androidx.compose.foundation.Indication
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +33,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +50,7 @@ import com.perkus.imagoedit.ui.common.LABELED_SLIDER_W
 import com.perkus.imagoedit.ui.common.NumField
 import com.perkus.imagoedit.ui.common.SliderRow
 import com.perkus.imagoedit.ui.common.consumeTaps
+import com.perkus.imagoedit.ui.common.doubleTapped
 import com.perkus.imagoedit.ui.theme.BarBg
 import com.perkus.imagoedit.ui.theme.BtnGreen
 import com.perkus.imagoedit.ui.theme.Red
@@ -80,6 +79,7 @@ fun BottomPanel(expanded: Boolean, onExpand: (() -> Unit)?, modifier: Modifier, 
 
     Column(
         modifier = modifier
+            .toolPanel()
             .clip(SmallShape)
             .background(BarBg)
             .padding(horizontal = 8.dp)
@@ -211,8 +211,8 @@ fun RowScope.PopoverSlider(label: AnnotatedString, value: Int, range: IntRange, 
         SliderRow(value, range, suffix, onFinished = onFinished, onChange = onChange) { onApply(it.roundToInt()) }
     }
 
-/** Keyed by the lambda: pointerInput(Unit) would keep the first [onApply] */
-private fun Modifier.resetOnDoubleTap(on: Boolean, onApply: (Int) -> Unit) = if (on) pointerInput(onApply) { detectTapGestures(onDoubleTap = { onApply(0) }) } else this
+/** [onApply] 0 on a quick double tap */
+private fun Modifier.resetOnDoubleTap(on: Boolean, onApply: (Int) -> Unit) = if (on) doubleTapped(onApply) { onApply(0) } else this
 
 @Composable
 fun FieldText(text: String, color: Color = Color.White) = Text(text, color = color, fontSize = 14.sp, fontWeight = FontWeight.Bold)

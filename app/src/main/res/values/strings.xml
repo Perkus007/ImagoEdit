@@ -82,6 +82,8 @@
     <string name="brush_size">Size</string>
     <string name="brush_hardness">Hardness</string>
     <string name="brush_paint">Paint</string>
+    <string name="brush_edges">Edge-aware</string>
+    <string name="edge_limit">Limit</string>
     <string name="style_healing">Healing brush</string>
     <string name="style_area">Area</string>
     <string name="style_finger">Finger</string>
@@ -103,6 +105,7 @@
     <string name="paste">Paste</string>
     <string name="clear">Clear</string>
     <string name="extract">Extract</string>
+    <string name="show_cursor">Show cursor</string>
     <string name="select_all">Select all</string>
     <string name="deselect">Deselect</string>
     <string name="select_pixels">Select pixels</string>

@@ -27,6 +27,8 @@ import com.perkus.imagoedit.data.BLUR_EXACT
 import com.perkus.imagoedit.data.Blurred
 import com.perkus.imagoedit.data.Clone
 import com.perkus.imagoedit.data.Dab
+import com.perkus.imagoedit.data.EdgePx
+import com.perkus.imagoedit.data.Edges
 import com.perkus.imagoedit.data.Feather
 import com.perkus.imagoedit.data.Layer
 import com.perkus.imagoedit.data.LayerMask
@@ -41,7 +43,6 @@ import com.perkus.imagoedit.data.Stroke
 import com.perkus.imagoedit.data.TILE
 import com.perkus.imagoedit.data.Tiles
 import com.perkus.imagoedit.data.canvasToFile
-import com.perkus.imagoedit.data.composite
 import com.perkus.imagoedit.data.drawMasked
 import com.perkus.imagoedit.data.drawTiles
 import com.perkus.imagoedit.data.fileH
@@ -50,6 +51,7 @@ import com.perkus.imagoedit.data.fileW
 import com.perkus.imagoedit.data.hasImage
 import com.perkus.imagoedit.data.keepPaint
 import com.perkus.imagoedit.data.patchTile
+import com.perkus.imagoedit.data.renderer
 import com.perkus.imagoedit.data.saveClipLayer
 import com.perkus.imagoedit.data.tilePaint
 import java.nio.ByteBuffer
@@ -68,6 +70,22 @@ private const val MAX_BLUR = 20f // σ «Области» при Интенси�
 private const val LIVE_SIGMA = 2f // наименьший σ уменьшенной копии живой «Области», px
 private const val LIVE_GRID = 4f // px экрана на px этой копии: крупнее после растяжения видна гранями — σ копии растёт до BLUR_EXACT
 private const val SMEAR_PUSH = 1f // сдвиг пикселей «Пальцем» при Интенсивности 100%, диаметров; по квадрату
+
+// DIFFERENCE: visible on any color
+private val ringPaint = Paint().apply { style = Paint.Style.STROKE; isAntiAlias = false; color = Color.WHITE; blendMode = BlendMode.DIFFERENCE }
+private val ringPath = Path()
+
+/** An inverting cross at ([x], [y]), screen px: the Stamp's source mark, the cursor's. One path: DIFFERENCE isn't applied twice where the lines cross */
+fun DrawScope.drawCross(x: Float, y: Float) {
+    val a = MARK_ARM.toPx()
+    ringPath.rewind()
+    ringPath.moveTo(x - a, y)
+    ringPath.lineTo(x + a, y)
+    ringPath.moveTo(x, y - a)
+    ringPath.lineTo(x, y + a)
+    ringPaint.strokeWidth = MARK_W.toPx()
+    drawContext.canvas.nativeCanvas.drawPath(ringPath, ringPaint)
+}
 
 /** Blur stroke's live result on its Live's tile grid ([cols] wide, [n] tiles) of the layer [render] draws: Area — [area] (σ [sigma] file px), Finger — [smear];
 [smeared] — it for the bake, if at the bake's raster */
@@ -94,23 +112,37 @@ private class Visited {
 
 /** A stroke's live ALPHA_8 coverage in layer [on]'s file px (as aimed), [k] tile px per file px, tile 0 at tile px ([ox], [oy]): the grid covers the canvas, past the layer too;
 [color] null — erases, unless [clone] or [blur]; [clip], [feather] — the selection, file px; [toFile] — canvas px → file px; [select] — the Selection brush's.
-A not solid Dab's [tiles] come from their [visits] */
-private class Live(val on: Layer, val color: Int?, val clone: Clone?, val k: Float, val ox: Int, val oy: Int, val cols: Int, val rows: Int, val opacity: Float, val clip: Path?,
-    val feather: Feather?, val toFile: Matrix, val select: Region.Op?, val blur: LiveBlur?) {
+[edges] — cuts the dabs by layer [from]'s px: [on]'s, the Selection brush's — the active one's. Edge-aware or not solid Dab's [tiles] come from their [visits] */
+private class Live(val on: Layer, val from: Long, val color: Int?, val clone: Clone?, val k: Float, val ox: Int, val oy: Int, val cols: Int, val rows: Int, val opacity: Float,
+    val clip: Path?, val feather: Feather?, val toFile: Matrix, val select: Region.Op?, val blur: LiveBlur?, val edges: Edges?) {
     val tiles = arrayOfNulls<Bitmap>(cols * rows)
     val visits = arrayOfNulls<Visited>(cols * rows)
+    private val stale = BooleanArray(cols * rows) // visits not in their tiles yet: put once a frame, not a dab
     val bounds = RectF() // the dabs' reach, file px
+
+    fun visited(k: Int) { stale[k] = true }
+
+    /** [tiles] get their [visits]. Draw phase */
+    fun upload() {
+        for (k in stale.indices) if (stale[k]) {
+            stale[k] = false
+            tiles[k]?.copyPixelsFromBuffer(ByteBuffer.wrap(visits[k]!!.out))
+        }
+    }
 
     /** Grid tiles [t] onto [c], file px */
     fun draw(c: Canvas, t: Array<Bitmap?>, paint: Paint, r: RectF, blank: Paint? = null) = c.drawTiles(t, cols, 1f / k, paint, r, blank, ox / k, oy / k)
 }
 
 /** Drawing, Eraser, Stamp and Blur on the active layer ([aim]), and the Selection brush over the canvas; screen px. Dabs start past touch slop or on lift: a pinch leaves nothing.
-Points are joined by quadratic curves; live tiles at about screen resolution; on release [onStroke] bakes at full resolution off the main thread. Live state is read in the draw phase.
-Stamp: a pick places the source mark; the first stroke after it fixes the offset, the next keep it. [idle] — no overlay open: a press that closes one isn't a stroke */
+Points are joined by quadratic curves; live tiles at about screen resolution (edge-aware ones at full: as baked); on release [onStroke] bakes at full resolution off the main thread.
+Live state is read in the draw phase.
+Stamp: a pick places the source mark; the first stroke after it fixes the offset, the next keep it. [idle] — no overlay open: a press that closes one isn't a stroke.
+«С учётом краёв» (BrushOptions.edges): each dab cut to its center's area of the active layer's px without own edge-aware paint (EdgePx) */
 @Stable
 class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, private val onStroke: (Stroke, () -> Unit) -> Unit) : MaskOverlay {
     private var layer by mutableStateOf<Layer?>(null) // read by has() in the draw phase
+    private var cut: EdgePx? = null // the active layer's px edge-aware dabs are cut by
     private var tool by mutableStateOf(Tool.Eraser)
     private val fileM = Matrix() // file px → canvas px
     private var sel: Selection? = null
@@ -121,14 +153,17 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
     private var canvasW = 0
     private var canvasH = 0
 
-    /** [l] — as Layer.paintable, [b], [m], [p] — its pixels, mask, patch; for the Selection tool the canvas as a layer, id 0: not clipped by the selection. [cw]×[ch] — the canvas */
-    fun aim(l: Layer?, s: Selection?, t: Tool, b: Bitmap?, m: LayerMask?, p: Tiles?, cw: Int, ch: Int) {
+    /** [l] — the active layer as Layer.paintable, [b], [m], [p] — its pixels, mask, patch, [c] — its px edge-aware dabs are cut by; the Selection tool paints
+    the canvas as a layer, id 0: not clipped by the selection. [cw]×[ch] — the canvas */
+    fun aim(l: Layer?, s: Selection?, t: Tool, b: Bitmap?, m: LayerMask?, p: Tiles?, c: EdgePx?, cw: Int, ch: Int) {
+        val on = if (t == Tool.Selection) Layer(w = cw, h = ch, id = 0) else l
         val area = s.takeUnless { t == Tool.Selection }
-        if (l != null && (l != layer || area !== sel)) {
-            fileM.set(l.fileToCanvas())
-            clip = area?.let { (it.feather?.let { f -> Path().apply { addRect(RectF(f.bounds), Path.Direction.CW) } } ?: Path(it.outline)).apply { transform(l.canvasToFile()) } }
+        if (on != null && (on != layer || area !== sel)) {
+            fileM.set(on.fileToCanvas())
+            clip = area?.let { (it.feather?.let { f -> Path().apply { addRect(RectF(f.bounds), Path.Direction.CW) } } ?: Path(it.outline)).apply { transform(on.canvasToFile()) } }
         }
-        layer = l
+        layer = on
+        cut = c
         sel = area
         tool = t
         layerBmp = b
@@ -182,11 +217,22 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
     private val addPaint = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.ADD) }
     private val resultPaint = tilePaint()
     private val sourcePaints = MaskPaints()
-    // DIFFERENCE: visible on any color
-    private val ringPaint = Paint().apply { style = Paint.Style.STROKE; isAntiAlias = false; color = Color.WHITE; blendMode = BlendMode.DIFFERENCE }
     private val invertPaint = tilePaint().apply { isFilterBitmap = false; color = Color.WHITE; blendMode = BlendMode.DIFFERENCE } // whole px, as the selection will be
-    private val markPath = Path()
     private val rect = RectF()
+
+    private val brush get() = when (tool) {
+        Tool.Drawing -> o.drawing
+        Tool.Stamp -> o.stamp.brush
+        Tool.Selection -> o.selection.brush
+        Tool.Blur -> o.blur.brush
+        Tool.Eraser -> o.eraser
+    }
+
+    /** The ring's radius at the aimed tool's brush size, screen px */
+    fun radius(density: Float) = brush[BrushParam.Size].value * density / 2
+
+    /** This press or the next picks the Stamp's source: a point, no ring */
+    val picks get() = picking || tool == Tool.Stamp && (o.stamp.source || source == null)
 
     fun begin(p: Offset, offset: Offset, scale: Float, density: Float) {
         if (!idle()) return
@@ -196,20 +242,14 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         touch = at
         markWas = mark
         val stamp = tool == Tool.Stamp
-        if (stamp && (o.stamp.source || source == null)) {
+        if (picks) {
             picking = true
             return
         }
         val l = layer
         val selects = tool == Tool.Selection
         if (l == null || !l.visible || tool != Tool.Drawing && !selects && !l.hasImage) return
-        val b = when (tool) {
-            Tool.Drawing -> o.drawing
-            Tool.Stamp -> o.stamp.brush
-            Tool.Selection -> o.selection.brush
-            Tool.Blur -> o.blur.brush
-            Tool.Eraser -> o.eraser
-        }
+        val b = brush
         val finger = tool == Tool.Blur && o.blur.style.value == BlurStyle.Finger
         val intensity = b[BrushParam.Intensity].value / 100f
         if (tool == Tool.Blur && intensity == 0f) return
@@ -226,7 +266,7 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         toFile.postScale(scale, scale)
         toFile.postTranslate(offset.x, offset.y)
         toFile.invert(toFile)
-        ringR = b[BrushParam.Size].value * density / 2
+        ringR = radius(density)
         r = toFile.mapRadius(ringR)
         // Smudge: dabs ≤ SMEAR_STEP apart in the bake's raster (the finest)
         val spacing = maxOf(2 * SPACING, MIN_STEP / r).let { if (finger) minOf(it, SMEAR_STEP / minOf(r, SMEAR_MAX)) else it }
@@ -237,7 +277,9 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         if (dab.let { it == null || it.hardness != edge || it.flow != flow }) dab = Dab(edge, flow)
         prevX = Float.NaN
         prevY = Float.NaN
-        val k = minOf(1f, scale, if (finger) SMEAR_MAX / r else 1f)
+        val aware = cut?.takeIf { b.edges.value && it.layer.hasImage }
+        // Edge-aware: at full size, as the bake makes them
+        val k = if (aware != null) 1f else minOf(1f, scale, if (finger) SMEAR_MAX / r else 1f)
         // The canvas too, in file px: a stroke past the layer grows it (Stroke.room)
         val grid = RectF(0f, 0f, canvasW.toFloat(), canvasH.toFloat()).apply { back.mapRect(this); union(0f, 0f, l.fileW.toFloat(), l.fileH.toFloat()) }
         val ox = floor(grid.left * k).toInt()
@@ -246,16 +288,12 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         val lh = ceil(grid.bottom * k).toInt() - oy
         val cols = (lw + TILE - 1) / TILE
         val rows = (lh + TILE - 1) / TILE
+        val lb = layerBmp
+        val lm = layerMask
+        val lp = layerPatch
         val blur = if (tool != Tool.Blur) null else {
-            val lb = layerBmp
-            val lm = layerMask
-            val lp = layerPatch
-            val fw = l.fileW
-            val fh = l.fileH
             // Its own canvas: the bake may go on with a handed smudge
-            val rc = Canvas()
-            val rp = MaskPaints()
-            val render = { into: Bitmap, x: Int, y: Int -> rc.composite(into, x + ox, y + oy, lb, fw, fh, lm, lp, rp, k) }
+            val render = l.renderer(lb, lm, lp, k, ox = ox, oy = oy)
             // keep q moves px by 2r·q/(1 − q) = push diameters
             val push = intensity * intensity * SMEAR_PUSH
             val smear = if (finger) Smear(lw, lh, r * k, hard, push / (1 + push), lb, k < 1f, render) else null
@@ -266,8 +304,13 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
             // At the bake's raster (Stroke.bake: ks, from file px 0) the bake takes the smudge as is
             LiveBlur(fileSigma, area, smear, render, lb, cols, cols * rows, smear?.takeIf { k == minOf(1f, SMEAR_MAX / r) && ox == 0 && oy == 0 }?.let { Smeared(it, lm, lp) })
         }
-        cur = Live(l, if (tool == Tool.Drawing) o.color.value.toArgb() else null, clone, k, ox, oy, cols, rows, b[BrushParam.Opacity].value / 100f, clip, sel?.feather, back,
-            if (selects) o.selection.mode.value.op else null, blur)
+        // Over the px the bake reads: an Eraser's layer doesn't grow (Stroke.room), past it its edge px repeat. The Selection brush's: on the canvas
+        val edges = aware?.let {
+            val t = b.edgeTolerance
+            if (tool == Tool.Eraser) Edges(0, 0, l.fileW, l.fileH, k, t, it.bmp, it.renderer(back, k)) else Edges(ox, oy, lw, lh, k, t, it.bmp, it.renderer(back, k, ox, oy))
+        }
+        cur = Live(l, if (selects) cut?.layer?.id ?: 0 else l.id, if (tool == Tool.Drawing) o.color.value.toArgb() else null, clone, k, ox, oy, cols, rows, b[BrushParam.Opacity].value / 100f, clip,
+            sel?.feather, back, if (selects) o.selection.mode.value.op else null, blur, edges)
         curArea = sel
         count = 0
         pt[0] = p.x
@@ -322,8 +365,8 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         }
         version++
         val smear = lb?.smear
-        onStroke(Stroke(s.on.id, s.on.file, s.color, xy.copyOf(2 * count), r, smear?.hardness ?: d.hardness, d.flow, s.opacity, curArea, s.clone, s.select,
-            blur = if (lb != null && smear == null) lb.sigma else 0f, smudge = smear?.keep, smeared = lb?.smeared)) { drop(s) }
+        onStroke(Stroke(s.from, s.on.file, s.color, xy.copyOf(2 * count), r, smear?.hardness ?: d.hardness, d.flow, s.opacity, curArea, s.clone, s.select,
+            blur = if (lb != null && smear == null) lb.sigma else 0f, smudge = smear?.keep, smeared = lb?.smeared, edges = s.edges?.tolerance)) { drop(s) }
     }
 
     fun cancel() {
@@ -377,19 +420,21 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         val r0 = floor((ly - lr - s.oy) / TILE).toInt().coerceAtLeast(0)
         val r1 = floor((ly + lr - s.oy) / TILE).toInt().coerceAtMost(s.rows - 1)
         val b = s.blur
+        val e = s.edges?.takeIf { c0 <= c1 && r0 <= r1 }?.also { it.cut(lx, ly, lr) }
         for (ty in r0..r1) for (tx in c0..c1) {
             val k = ty * s.cols + tx
             val bx = s.ox + tx * TILE
             val by = s.oy + ty * TILE
-            val t = s.tiles[k] ?: (spare.removeLastOrNull() ?: createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8)).also { s.tiles[k] = it }
-            if (d.solid) {
+            // Mipmapped: full-size ones shrink on screen as smoothly as the baked layer's smaller copies
+            val t = s.tiles[k] ?: (spare.removeLastOrNull() ?: createBitmap(TILE, TILE, Bitmap.Config.ALPHA_8).apply { setHasMipMap(true) }).also { s.tiles[k] = it }
+            if (d.solid && e == null) {
                 canvas.setBitmap(t)
                 canvas.translate(-bx.toFloat(), -by.toFloat())
                 d.draw(canvas, lx, ly, lr)
             } else {
                 val v = s.visits[k] ?: Visited().also { s.visits[k] = it }
-                d.visit(lx, ly, prevX, prevY, lr, bx, by, TILE, TILE, TILE, v.acc, v.cur, v.out)
-                t.copyPixelsFromBuffer(ByteBuffer.wrap(v.out))
+                d.visit(lx, ly, prevX, prevY, lr, bx, by, TILE, TILE, TILE, v.acc, v.cur, v.out, e)
+                s.visited(k)
             }
             if (b != null && b.area != null && b.px[k] == null) b.area.into(b.tile(k), tx * TILE, ty * TILE, b.render)
         }
@@ -403,6 +448,7 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         shown.remove(s)
         for (t in s.tiles) if (t != null) { t.eraseColor(Color.TRANSPARENT); spare += t }
         s.blur?.recycle()
+        s.edges?.recycle()
         version++
     }
 
@@ -427,6 +473,7 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         for (i in shown.indices) {
             val s = shown[i]
             if (s.on.id != l.id) continue
+            s.upload()
             val onto = if (s.on.file == l.file) null else s.on.fileToCanvas().apply { postConcat(l.canvasToFile()) }
             val ink = s.color
             val from = s.clone
@@ -478,31 +525,29 @@ class BrushTool(private val o: ToolOptions, private val idle: () -> Boolean, pri
         restore()
     }
 
-    /** Selection brush strokes inverted, the ring under the finger, the Stamp's source mark */
-    fun DrawScope.drawRing(offset: Offset, scale: Float, cw: Int, ch: Int) {
+    /** Selection brush strokes inverted, the ring under the finger and the one at [cursor] — the virtual cursor's spot (Unspecified — no finger holds it; null — off),
+    the Stamp's source mark: with the cursor only while it shows a ring, following it once the offset is fixed */
+    fun DrawScope.drawRing(offset: Offset, scale: Float, cw: Int, ch: Int, cursor: Offset?) {
         val c = drawContext.canvas.nativeCanvas
         version
         c.save()
         c.translate(offset.x, offset.y)
         c.scale(scale, scale)
         c.clipRect(0f, 0f, cw.toFloat(), ch.toFloat())
-        for (i in shown.indices) shown[i].let { if (it.select != null) it.draw(c, it.tiles, invertPaint, rect) }
+        for (i in shown.indices) shown[i].let { if (it.select != null) { it.upload(); it.draw(c, it.tiles, invertPaint, rect) } }
         c.restore()
-        ringPaint.strokeWidth = RING_W.toPx()
+        // One path: DIFFERENCE isn't applied twice where the rings meet — the cursor's stroke has both in one place
+        ringPath.rewind()
         val p = ring
-        if (!p.isUnspecified) c.drawCircle(p.x, p.y, ringR, ringPaint)
-        val m = mark
-        if (tool != Tool.Stamp || m.isUnspecified) return
-        val x = offset.x + m.x * scale
-        val y = offset.y + m.y * scale
-        val arm = MARK_ARM.toPx()
-        // One path: DIFFERENCE isn't applied twice where the lines cross
-        markPath.rewind()
-        markPath.moveTo(x - arm, y)
-        markPath.lineTo(x + arm, y)
-        markPath.moveTo(x, y - arm)
-        markPath.lineTo(x, y + arm)
-        ringPaint.strokeWidth = MARK_W.toPx()
-        c.drawPath(markPath, ringPaint)
+        if (!p.isUnspecified) ringPath.addCircle(p.x, p.y, ringR, Path.Direction.CW)
+        val at = cursor?.takeUnless { it.isUnspecified || picks }
+        if (at != null) ringPath.addCircle(at.x, at.y, radius(density), Path.Direction.CW)
+        ringPaint.strokeWidth = RING_W.toPx()
+        c.drawPath(ringPath, ringPaint)
+        if (tool != Tool.Stamp || cursor != null && at == null) return
+        val s = shift
+        val m = if (at != null && s != null) (at - offset) / scale + s else mark
+        if (m.isUnspecified) return
+        drawCross(offset.x + m.x * scale, offset.y + m.y * scale)
     }
 }

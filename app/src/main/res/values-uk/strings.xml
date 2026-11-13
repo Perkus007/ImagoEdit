@@ -82,6 +82,8 @@
     <string name="brush_size">Розмір</string>
     <string name="brush_hardness">Жорсткість</string>
     <string name="brush_paint">Фарба</string>
+    <string name="brush_edges">Зважаючи\nна краї</string>
+    <string name="edge_limit">Межа</string>
     <string name="style_healing">Відновлювальний пензель</string>
     <string name="style_area">Область</string>
     <string name="style_finger">Палець</string>
@@ -103,6 +105,7 @@
     <string name="paste">Вставити</string>
     <string name="clear">Очистити</string>
     <string name="extract">Витягти</string>
+    <string name="show_cursor">Показати курсор</string>
     <string name="select_all">Виділити все</string>
     <string name="deselect">Скасувати виділення</string>
     <string name="select_pixels">Виділити пікселі</string>
@@ -128,12 +131,12 @@
     <string name="fonts_user_hint">Помістіть файли шрифтів «.ttf», «.otf» або «.ttc» у теку «.imagoedit/.fonts». Підтримуються як звичайні, так і варіативні шрифти.</string>
     <string name="correction_invert">Інверсія</string>
     <string name="correction_black_white">Чорно-білий</string>
-    <string name="correction_invert_black_white">Інверсія й чорно-білий</string>
+    <string name="correction_invert_black_white">Інверсія і чорно-білий</string>
     <string name="correction_contrast">Контрастність</string>
     <string name="correction_brightness_contrast">Яскравість і контрастність</string>
     <string name="correction_temperature">Температура</string>
     <string name="correction_replace_color">Замінити колір</string>
-    <string name="correction_shadows_highlights">Тіні й світло</string>
+    <string name="correction_shadows_highlights">Тіні/Світло</string>
     <string name="correction_color_balance">Колірний баланс</string>
     <string name="correction_sharpness">Різкість</string>
     <string name="correction_shade">Відтінок</string>
