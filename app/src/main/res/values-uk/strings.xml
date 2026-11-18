@@ -94,6 +94,7 @@
     <string name="app_info">Цей застосунок є загальнодоступним і має відкритий вихідний код. Якщо він вам подобається, ви можете підтримати автора: це стане чудовою мотивацією робити його ще кращим :)</string>
     <string name="license">Ліцензія:</string>
     <string name="language">Мова програми</string>
+    <string name="language_tag">uk</string>
     <string name="vibration">Вібрація</string>
     <string name="sounds">Звуки</string>
     <string name="copied">Скопійовано</string>

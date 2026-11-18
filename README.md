@@ -145,7 +145,8 @@ and never overwrite an older file.
 
 ### Interface
 - Landscape, full screen
-- English, Russian, Ukrainian. The app follows the system language, or uses the one set in Settings
+- 16 languages: English, Chinese (Simplified), Spanish, Hindi, Portuguese (Brazil and Portugal), French, Indonesian, Malay, Japanese, German, Korean, Turkish, Polish, Kazakh, Russian, Ukrainian.
+  The app follows the system language, or uses the one set in Settings
 - Haptic feedback and sounds, each can be turned off
 - Double-tap a slider's name to reset it to its default
 - Settings → About: version, license, links, third-party licenses
@@ -252,7 +253,7 @@ app/src/main/
 │       └── theme/
 ├── cpp/                   JNI JPEG/WebP encoders, pixel loops (brushes, smudge, corrections, directional blur),
 │                          CMake build of libjpeg-turbo and libwebp
-└── res/                   strings (en, ru, uk), bundled fonts, license texts
+└── res/                   strings in 16 languages, bundled fonts, license texts
 ```
 Stack: Kotlin, Jetpack Compose (Material 3), C via JNI. Third-party libraries are never copied into the repository:
 the native ones are downloaded at build time with a pinned version and checksum.
@@ -262,7 +263,8 @@ Bug reports and pull requests are welcome in [Issues](../../issues). Bug reports
 [4PDA topic](https://4pda.to/forum/index.php?showtopic=1129270). By contributing you agree that
 your contributions are licensed under GPL-3.0-or-later.
 
-When adding strings, add them in all three languages: `values/`, `values-ru/` and `values-uk/`.
+When adding strings, add them in every language: `values/` and all `values-*/` translation folders.
+`values-pt-rPT` holds only the strings that differ from `values-pt` (Brazilian): add one there only if European Portuguese says it differently.
 A new library bundled into the APK also needs its license text in `res/values/licenses.xml`,
 in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and in the list below.
 

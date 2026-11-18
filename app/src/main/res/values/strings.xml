@@ -94,6 +94,8 @@
     <string name="app_info">This is an open-source, freely available application. If you like it, you can support the author — it will be a great motivation to make it even better :)</string>
     <string name="license">License:</string>
     <string name="language">App language</string>
+    <!-- Tag of this folder's language in SettingsScreen.LANGUAGES: the picker shows the strings in use -->
+    <string name="language_tag">en</string>
     <string name="vibration">Vibration</string>
     <string name="sounds">Sounds</string>
     <string name="copied">Copied</string>

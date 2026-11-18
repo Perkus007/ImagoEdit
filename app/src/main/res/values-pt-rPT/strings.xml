@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Only strings that differ from values-pt (Brazilian): the rest falls back to it -->
+<resources>
+    <string name="exit_save_title">Guardar o projeto?</string>
+    <string name="exit_save">Guardar e sair</string>
+    <string name="exit_save_copy">Guardar uma cópia e sair</string>
+    <string name="exit_discard">Sair SEM guardar</string>
+    <string name="delete_projects">Eliminar projetos</string>
+    <string name="no_access_title">Sem acesso aos ficheiros</string>
+    <string name="no_access_text">Os projetos ficam na pasta oculta «.imagoedit» e não são eliminados com a aplicação. Ative «Acesso a todos os ficheiros» para os ver.</string>
+    <string name="choose_app">Escolha uma aplicação</string>
+    <string name="canvas_limit">Nem todos os dispositivos suportam mais de %1$d MP:\nse o seu não suportar, a aplicação pode fechar.\nA gravação automática está ativada:\napós reiniciar, o projeto poderá ser recuperado.</string>
+    <string name="too_large_title">Imagem demasiado grande</string>
+    <string name="busy">Operação em curso, aguarde...</string>
+    <string name="recovery_text">A aplicação foi encerrada inesperadamente enquanto trabalhava num projeto. Pretende recuperar o projeto e continuar a trabalhar?</string>
+    <string name="min_sdk_avif_decode">⚠️ Android 11: o «ImageDecoder» não consegue ler AVIF. As fotos AVIF da galeria não podem ser importadas no Android 11. A exportação para AVIF funciona, mas não é possível voltar a abrir esse ficheiro na aplicação. No Android 12+, tudo funciona normalmente.</string>
+    <string name="export_warn_avif">⚠️ Ficheiros AVIF exportados com resolução acima de 4K podem não abrir em alguns smartphones.</string>
+    <string name="export_warn_memory">⚠️ Quanto maior a resolução da exportação, mais RAM é necessária. Se a memória se esgotar, a exportação terminará com erro ou a aplicação será fechada.</string>
+    <string name="last_export">Últimos ficheiros exportados:</string>
+    <string name="blend_mode">Modo de mistura</string>
+    <string name="blend_screen">Ecrã</string>
+    <string name="merging_layers">Fundir camadas</string>
+    <string name="merge_all_layers">Fundir todas as camadas</string>
+    <string name="merge_visible_layers">Fundir camadas visíveis</string>
+    <string name="merge_with_previous">Fundir com a anterior</string>
+    <string name="select_contiguous">Píxeis\ncontíguos</string>
+    <string name="brush_edges">Respeitar\ncontornos</string>
+    <string name="app_info">Esta é uma aplicação de código aberto e gratuita. Se gostar dela, pode apoiar o autor — será uma grande motivação para a tornar ainda melhor :)</string>
+    <string name="language">Idioma da aplicação</string>
+    <string name="language_tag">pt-PT</string>
+    <string name="license_desc">A GNU General Public License v3.0 é uma licença livre do tipo copyleft. Pode utilizar, estudar, modificar e distribuir livremente este programa nos termos da versão 3 da licença ou (à sua escolha) de qualquer versão posterior. Se o distribuir (incluindo versões modificadas), tem de manter a mesma licença, indicar o autor e disponibilizar o código-fonte. O software é fornecido «tal como está», sem qualquer garantia.</string>
+    <string name="cut">Cortar</string>
+    <string name="deselect">Anular seleção</string>
+    <string name="select_pixels">Selecionar píxeis</string>
+    <string name="frame">Recortar</string>
+    <string name="rotate_canvas">Rodar tela</string>
+    <string name="rotate_right_90">Rodar 90° para a direita</string>
+    <string name="rotate_left_90">Rodar 90° para a esquerda</string>
+    <string name="rotate_180">Rodar 180°</string>
+    <string name="font_default">Predefinido</string>
+    <string name="fonts_system">Tipos de letra\ndo sistema</string>
+    <string name="fonts_user">Tipos de letra\npersonalizados</string>
+    <string name="fonts_favorites">Favoritos</string>
+    <string name="fonts_user_hint">Coloque ficheiros de tipos de letra «.ttf», «.otf» ou «.ttc» na pasta «.imagoedit/.fonts». São suportados tipos de letra normais e variáveis.</string>
+</resources>

@@ -94,6 +94,7 @@
     <string name="app_info">Это приложение общедоступно и имеет открытый исходный код. Если оно вам нравится, вы можете поддержать автора: это станет отличной мотивацией делать его ещё лучше :)</string>
     <string name="license">Лицензия:</string>
     <string name="language">Язык приложения</string>
+    <string name="language_tag">ru</string>
     <string name="vibration">Вибрация</string>
     <string name="sounds">Звуки</string>
     <string name="copied">Скопировано</string>

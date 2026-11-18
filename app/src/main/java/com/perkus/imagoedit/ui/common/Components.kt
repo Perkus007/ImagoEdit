@@ -20,12 +20,15 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -88,6 +91,8 @@ private val BUSY_SHADOW_OFFSET = 1.dp
 private val BUSY_SHADOW_BLUR = 2.dp
 const val DISABLED_ALPHA = 0.3f // неактивная кнопка и пункт меню
 private val ITEM_SHAPE = RoundedCornerShape(4.dp)
+private val MENU_LIST_H = 260.dp // ~6.5 пунктов: обрезанный снизу подсказывает прокрутку
+private val BAR_ROOM = 8.dp // справа от пунктов, под полосу прокрутки
 private val THUMB_W = 4.dp
 private val THUMB_MIN = 24.dp
 
@@ -131,6 +136,13 @@ fun MenuItem(text: String, selected: Boolean = false, enabled: Boolean = true, i
         lead(color)
         Text(text, color = color, fontSize = 14.sp, maxLines = 1)
     }
+}
+
+/** A popover's MenuItems: taller than MENU_LIST_H — scroll */
+@Composable
+fun MenuList(content: @Composable ColumnScope.() -> Unit) {
+    val scroll = rememberScrollState()
+    Column(Modifier.heightIn(max = MENU_LIST_H).scrollbar(scroll).verticalScroll(scroll, overscrollEffect = null).padding(end = BAR_ROOM), Arrangement.spacedBy(4.dp), content = content)
 }
 
 /** Read in the draw phase: scrolling doesn't recompose. Rows of one height */

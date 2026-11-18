@@ -67,6 +67,7 @@ import com.perkus.imagoedit.ui.common.DialogButton
 import com.perkus.imagoedit.ui.common.IconBtn
 import com.perkus.imagoedit.ui.common.LocalFrame
 import com.perkus.imagoedit.ui.common.MenuItem
+import com.perkus.imagoedit.ui.common.MenuList
 import com.perkus.imagoedit.ui.common.Popover
 import com.perkus.imagoedit.ui.common.anchored
 import com.perkus.imagoedit.ui.common.dismissOnPress
@@ -109,8 +110,13 @@ private val NOTICES = listOf(
 )
 private val NOTICES_W = 600.dp
 
-// Тег, флаг, название на самом языке; "en" — по умолчанию (values/)
-private val LANGUAGES = listOf(Triple("en", "🇬🇧", "English"), Triple("ru", "🇷🇺", "Русский"), Triple("uk", "🇺🇦", "Українська"))
+// Тег (= R.string.language_tag его папки), флаг, название на самом языке; "en" — по умолчанию (values/). Индонезийский: папка values-in (её ищет Android)
+private val LANGUAGES = listOf(
+    Triple("en", "🇬🇧", "English"), Triple("id", "🇮🇩", "Bahasa Indonesia"), Triple("ms", "🇲🇾", "Bahasa Melayu"), Triple("de", "🇩🇪", "Deutsch"),
+    Triple("es", "🇪🇸", "Español"), Triple("fr", "🇫🇷", "Français"), Triple("pl", "🇵🇱", "Polski"), Triple("pt-BR", "🇧🇷", "Português (Brasil)"),
+    Triple("pt-PT", "🇵🇹", "Português (Portugal)"), Triple("tr", "🇹🇷", "Türkçe"), Triple("kk", "🇰🇿", "Қазақ тілі"), Triple("ru", "🇷🇺", "Русский"),
+    Triple("uk", "🇺🇦", "Українська"), Triple("hi", "🇮🇳", "हिन्दी"), Triple("ja", "🇯🇵", "日本語"), Triple("zh-CN", "🇨🇳", "简体中文"), Triple("ko", "🇰🇷", "한국어")
+)
 
 private val TICKER_W = 100.dp // адреса начинаются с одной линии
 private val LinkStyles = TextLinkStyles(SpanStyle(color = LinkBlue))
@@ -128,7 +134,8 @@ fun SettingsScreen(onClose: () -> Unit) {
     var showNotices by remember { mutableStateOf(false) }
     var languageMenu by remember { mutableStateOf<Rect?>(null) } // opener's bounds while open
     val languageBounds = rememberBounds()
-    val language = LocalConfiguration.current.locales[0].language.let { c -> LANGUAGES.firstOrNull { it.first == c } } ?: LANGUAGES[0]
+    // The strings in use, not the locale: Android may resolve a locale to another folder (zh-TW → values/, pt-AO → values-pt-rPT)
+    val language = stringResource(R.string.language_tag).let { t -> LANGUAGES.firstOrNull { it.first == t } } ?: LANGUAGES[0]
     BackHandler(languageMenu != null) { languageMenu = null }
 
     // Own Box: Surface's propagates min constraints, the popover would stretch to the screen
@@ -170,12 +177,14 @@ fun SettingsScreen(onClose: () -> Unit) {
             Box(Modifier.fillMaxSize().dismissOnPress { languageMenu = null })
             languageMenu?.let { anchor ->
                 Popover(anchor, Modifier.anchored(anchor, LocalFrame.current) { a, w, _ -> Offset(a.right - w, a.bottom + 4.dp.toPx()) }, { languageMenu = null }, Modifier.width(IntrinsicSize.Max)) {
-                    LANGUAGES.forEach { l ->
-                        MenuItem(l.third, l == language, onClick = {
-                            languageMenu = null
-                            // Applied on Activity creation (withAppLanguage)
-                            if (l != language) { settings.language = l.first; activity?.recreate() }
-                        }) { Text(l.second, fontSize = 20.sp) }
+                    MenuList {
+                        LANGUAGES.forEach { l ->
+                            MenuItem(l.third, l == language, onClick = {
+                                languageMenu = null
+                                // Applied on Activity creation (withAppLanguage)
+                                if (l != language) { settings.language = l.first; activity?.recreate() }
+                            }) { Text(l.second, fontSize = 20.sp) }
+                        }
                     }
                 }
             }
